@@ -107,36 +107,10 @@ app.post("/settings/keys/:id/revoke", async (req, res) => {
   return res.json({ id: req.params.id, revoked });
 });
 
-// --- Raw artifact (used by gallery previews + the viewer-shell iframe) ---
-app.get("/raw/:id", async (req, res) => {
-  const id = req.params.id;
-  if (isReserved(id)) return res.status(404).send(notFoundPage());
-  const meta = getArtifactMeta(id);
-  if (!meta) return res.status(404).send(notFoundPage());
-
-  const viewer = await resolveViewer(req);
-  const allowed = viewer.isAdmin || (viewer.org && viewer.org === meta.org);
-  if (!allowed) return res.status(404).send(notFoundPage()); // don't reveal existence across orgs
-
-  // Bundles are served under /raw/:id/ so relative links resolve.
-  if (meta.is_bundle) return res.redirect(302, `/raw/${id}/`);
-
-  const found = readArtifact(id);
-  if (!found) return res.status(404).send(notFoundPage());
-  const headers = {
-    "content-type": "text/html; charset=utf-8",
-    "x-content-type-options": "nosniff",
-    "referrer-policy": "no-referrer",
-    "cache-control": "private, max-age=60"
-  };
-  if (req.query.download !== undefined) {
-    const name = (meta.title || "artifact").replace(/[^\w.-]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 80) || "artifact";
-    headers["content-disposition"] = `attachment; filename="${name}.html"`;
-  }
-  res.set(headers).send(found.html);
-});
-
 // --- Bundle file serving: /raw/:id/<path> (entry when path empty) ---
+// Registered BEFORE /raw/:id: Express is non-strict, so /raw/:id/ would otherwise match
+// /raw/:id and the bundle redirect below would loop. This route claims the trailing-slash
+// and subpath requests first.
 app.get("/raw/:id/*", async (req, res) => {
   const id = req.params.id;
   const rel = req.params[0] || "";
@@ -158,6 +132,34 @@ app.get("/raw/:id/*", async (req, res) => {
       "cache-control": "private, max-age=60"
     })
     .send(file.content);
+});
+
+// --- Raw single-file artifact, or redirect a bundle to /raw/:id/ ---
+app.get("/raw/:id", async (req, res) => {
+  const id = req.params.id;
+  if (isReserved(id)) return res.status(404).send(notFoundPage());
+  const meta = getArtifactMeta(id);
+  if (!meta) return res.status(404).send(notFoundPage());
+
+  const viewer = await resolveViewer(req);
+  const allowed = viewer.isAdmin || (viewer.org && viewer.org === meta.org);
+  if (!allowed) return res.status(404).send(notFoundPage());
+
+  if (meta.is_bundle) return res.redirect(302, `/raw/${id}/`);
+
+  const found = readArtifact(id);
+  if (!found) return res.status(404).send(notFoundPage());
+  const headers = {
+    "content-type": "text/html; charset=utf-8",
+    "x-content-type-options": "nosniff",
+    "referrer-policy": "no-referrer",
+    "cache-control": "private, max-age=60"
+  };
+  if (req.query.download !== undefined) {
+    const name = (meta.title || "artifact").replace(/[^\w.-]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 80) || "artifact";
+    headers["content-disposition"] = `attachment; filename="${name}.html"`;
+  }
+  res.set(headers).send(found.html);
 });
 
 // --- Viewer shell: chrome (Home, prev/next within the org, sign out) around an artifact ---
