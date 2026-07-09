@@ -16,7 +16,7 @@ import { resolveViewer, JWT_VERIFICATION_ON } from "./lib/identity.js";
 import { renderGallery, renderArtifactShell, notFoundPage } from "./lib/portal.js";
 import { renderSettings } from "./lib/settings.js";
 import { listKeys, createKey, revokeKey } from "./lib/keys.js";
-import { getReaction, setReaction, reactionsFor } from "./lib/reactions.js";
+import { getReaction, setReaction, reactionsFor, sentimentMap } from "./lib/reactions.js";
 
 const PORT = Number(process.env.PORT || 3480);
 
@@ -68,7 +68,7 @@ app.get("/", async (req, res) => {
     sections = [];
   }
 
-  res.send(renderGallery(viewer, sections, reactionsFor(viewer.email)));
+  res.send(renderGallery(viewer, sections, reactionsFor(viewer.email), viewer.isAdmin ? sentimentMap() : new Map()));
 });
 
 // --- Settings (admin only): manage per-org upload API keys ---
