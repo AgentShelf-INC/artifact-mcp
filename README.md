@@ -1,54 +1,98 @@
 # artifact-mcp
 
-A small, self-hostable **MCP server that lets authorized agents publish HTML artifacts** to
-your own domain. An agent calls a tool, gets back a URL, and the page is served at
-`https://your-domain/<id>` — with a homepage index of everything published, and per-org
-isolation so different clients only ever see their own artifacts.
+A self-hostable **MCP server that lets authorized agents publish HTML artifacts** to your own
+domain. An agent calls a tool, gets back a URL, and the page is served at
+`https://your-domain/<id>` — with an org-scoped gallery of everything published, viewer
+navigation, favorites/sentiment, and per-org key management.
 
-Think "shareable Claude-style artifacts, hosted on infrastructure you control."
+Think "shareable Claude-style artifacts, hosted on infrastructure you control" — with real
+multi-tenancy.
+
+> Live deployment: **artifact.neilblackman.dev** (VM310 Docker, behind Cloudflare Tunnel + Access).
+> Sibling of the **Context Hub** (shared LLM memory) — different service, different purpose.
 
 ## Features
 
-- **MCP tools** (`publish_artifact`, `list_artifacts`, `delete_artifact`) over a keyed
-  HTTP endpoint — wire it into Claude Code, Codex, Hermes, or any MCP client.
-- **Hashed, revocable API keys** for upload — issue one per collaborator, revoke without a redeploy.
-- **Multi-tenant by identity.** Behind Cloudflare Access, each viewer is scoped to their org
-  by email domain; cross-org requests 404. An admin sees everything.
-- **Zero-config onboarding.** Any email domain you allow at the edge auto-tenants — no app change.
-- **No database server required** — SQLite + files on disk. One container.
+- **Publish via MCP** — `publish_artifact` (single self-contained HTML) and `publish_bundle`
+  (multi-file: several pages that link to each other + a shared stylesheet + assets).
+- **Multi-file bundles** — files served under `/raw/:id/…` so relative links (`_shared.css`,
+  cross-linked pages, images) resolve. Hosts whole interactive hubs as one artifact.
+- **Org tenancy** — each API key is locked to an org; each viewer is scoped to their org by
+  verified email domain. Cross-org requests 404. Admins see everything.
+- **Cloudflare Access front door** — humans log in (SSO); the app verifies the Access **JWT**
+  so the tenant boundary can't be spoofed. The `/mcp` upload path is Access-bypassed (agents
+  use the API key, not SSO).
+- **Gallery UI** — live-preview cards, org sections, search + org filter, download, delete.
+- **Viewer shell** — Home, prev/next within the org (+ arrow keys), favorite ♥, 👍/👎, download,
+  sign out.
+- **Favorites & sentiment** — per-viewer favorite (floats to the top of their gallery) and
+  up/down votes (aggregatable for admin insight).
+- **Settings (admin)** — generate/revoke per-org upload keys with a human display label; keys
+  are hashed, secrets shown once, revocable without a redeploy.
+- **No database server** — SQLite + files on disk. One container.
+
+## MCP tools (`POST /mcp`, bearer key)
+
+| Tool | Purpose |
+|---|---|
+| `publish_artifact(html, title, description, org?)` | Publish one self-contained HTML page |
+| `publish_bundle(files, entry?, title, description, org?)` | Publish a multi-file artifact; `files` is `{ "path": "content" }` |
+| `list_artifacts()` | List what this key has published (with URLs) |
+| `delete_artifact(id)` | Delete one of this key's artifacts |
+
+`org` is honored only for **admin** keys (target any org); org keys are locked to their own org.
 
 ## Architecture
 
 ```
 Agent ──(MCP, API key)──▶ /mcp ──┐
-                                 ├─▶ artifact-mcp (Node/Express) ─▶ SQLite + HTML files
-Human ──(Cloudflare Access)──▶ / , /<id> ──┘        served at https://your-domain/<id>
+                                 ├─▶ artifact-mcp (Node/Express) ─▶ SQLite + files on disk
+Human ──(Cloudflare Access)──▶ gallery / /:id / /raw/:id/… ──┘   served at https://domain/<id>
 ```
 
 Two access surfaces, deliberately split:
-- **Upload** (`/mcp`) — API-key auth. Not behind SSO (agents can't do an interactive login).
-- **View** (`/`, `/<id>`) — behind Cloudflare Access; the app verifies the Access JWT and
-  scopes content to the viewer's org.
+- **Upload** (`/mcp`) — API-key auth, Access-bypassed (agents can't do interactive SSO).
+- **View** (`/`, `/:id`, `/raw/:id/…`, `/settings`) — behind Cloudflare Access; the app
+  verifies the Access JWT and scopes content to the viewer's org.
+
+### Routes
+| Route | Role |
+|---|---|
+| `POST /mcp` | MCP JSON-RPC (upload), API-key auth |
+| `GET /` | org-scoped gallery (admin: all orgs) |
+| `GET /:id` | viewer shell (chrome + iframe) |
+| `GET /raw/:id` | raw single-file artifact (or 302 → `/raw/:id/` for bundles) |
+| `GET /raw/:id/*` | bundle file serving (path-traversal guarded) |
+| `POST /:id/react` | favorite / vote (per viewer) |
+| `DELETE /:id` | delete (admin or same-org viewer) |
+| `GET /settings`, `POST /settings/keys`, `POST /settings/keys/:id/revoke` | admin key management |
+
+### Key files
+`server.js` (routes) · `lib/mcp.js` (tools) · `lib/store.js` (single + bundle storage) ·
+`lib/auth.js` (hashed keys) · `lib/identity.js` (Access JWT → org) · `lib/keys.js` (admin key
+ops) · `lib/portal.js` (gallery + shell + 404) · `lib/settings.js` (key management page) ·
+`lib/reactions.js` (favorites/votes) · `lib/db.js` (SQLite schema).
+
+## Configuration (`.env`)
+
+| Var | Purpose |
+|---|---|
+| `ARTIFACT_API_KEYS` | Bootstrap keys, `clientId:org:secret` comma-separated (DB is authoritative after first boot) |
+| `ORG_EMAIL_DOMAINS` | Optional `domain:org` overrides — default: the email domain **is** the org (any Access-allowed domain auto-tenants) |
+| `ADMIN_EMAILS` / `ADMIN_EMAIL_DOMAINS` | Who sees every org |
+| `CF_ACCESS_TEAM_DOMAIN` + `CF_ACCESS_AUD` | Enable Access JWT verification (production) |
+| `MAX_ARTIFACT_BYTES` (2MB) · `MAX_BUNDLE_BYTES` (8MB) · `MAX_BUNDLE_FILES` (100) | Caps |
+
+See `.env.example`.
 
 ## Quick start
 
 ```bash
-cp .env.example .env   # set ARTIFACT_API_KEYS and (for prod) the CF_ACCESS_* vars
+cp .env.example .env      # set ARTIFACT_API_KEYS and (prod) CF_ACCESS_* vars
 docker compose up -d --build
 ```
 
-### Configuration (`.env`)
-
-| Var | Purpose |
-|---|---|
-| `ARTIFACT_API_KEYS` | Upload keys, `clientId:org:secret` comma-separated |
-| `ORG_EMAIL_DOMAINS` | Optional `domain:org` overrides (default: the email domain *is* the org) |
-| `ADMIN_EMAILS` / `ADMIN_EMAIL_DOMAINS` | Who sees every org |
-| `CF_ACCESS_TEAM_DOMAIN` + `CF_ACCESS_AUD` | Enable Cloudflare Access JWT verification (production) |
-| `MAX_ARTIFACT_BYTES` | Per-artifact size cap (default 2 MB) |
-
-### Publish (raw MCP call)
-
+Publish (raw MCP call):
 ```bash
 curl -H "Authorization: Bearer $KEY" -H 'content-type: application/json' \
   -d '{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"publish_artifact",
@@ -56,21 +100,32 @@ curl -H "Authorization: Bearer $KEY" -H 'content-type: application/json' \
   https://your-domain/mcp
 ```
 
+## Cloudflare setup (production)
+
+1. **Tunnel** public hostname `artifact.your-domain` → `http://<host>:3480`.
+2. **Access app** #1 on path `/mcp` → policy **Bypass → Everyone** (agents auth by key).
+3. **Access app** #2 catch-all → **Allow** your viewer email domains + admin email.
+4. Copy the catch-all app's **AUD** → set `CF_ACCESS_AUD` + `CF_ACCESS_TEAM_DOMAIN`, rebuild
+   → viewer identity is now JWT-verified.
+
+Onboard a viewer org: add its email domain to the Access allow-policy (auto-tenants). Let an
+org **publish**: generate a key for it in **Settings**.
+
 ## Security model
 
 - Cloudflare strips client-supplied `Cf-Access-*` headers at the edge; the app additionally
-  **verifies the Access JWT**, so viewer identity (and therefore org) can't be spoofed.
-- Served HTML lives on an **isolated subdomain** (its own origin) and every artifact is
-  attributed to the uploading key. Revoke a key to cut off a collaborator instantly.
+  **verifies the Access JWT**, so viewer identity (and org) can't be spoofed.
+- Served HTML lives on an isolated subdomain; every artifact is attributed to its uploading
+  key. Revoke a key to cut off a collaborator instantly.
+- Bundle paths are sanitized (no `..`, no absolute); size/file caps enforced.
 - Not (yet) included: content scanning / CSP sandboxing of hosted HTML, rate limiting.
-  See `## Roadmap`.
 
 ## Roadmap
 
-- Web delete/admin actions in the portal UI
-- Optional CSP sandboxing + content scanning for hosted HTML
-- Per-key rate limits and quotas
-- Artifact TTL / expiry option
+- Admin sentiment dashboard (votes already collected)
+- Deleted-artifact tombstone page
+- Optional CSP sandboxing / content scanning for hosted HTML
+- Per-key rate limits and quotas; artifact TTL/expiry
 
 ## License
 
