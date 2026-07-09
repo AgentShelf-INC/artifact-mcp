@@ -5,12 +5,13 @@ import { handleMcp } from "./lib/mcp.js";
 import {
   readArtifact,
   isReserved,
-  listOrgGroupedByClient,
+  listOrgArtifacts,
   listAllGroupedByOrg,
   getArtifactMeta,
   deleteArtifactById
 } from "./lib/store.js";
 import { resolveViewer, JWT_VERIFICATION_ON } from "./lib/identity.js";
+import { renderGallery } from "./lib/portal.js";
 
 const PORT = Number(process.env.PORT || 3480);
 
@@ -19,41 +20,6 @@ console.log(`[artifact-mcp] Access JWT verification: ${JWT_VERIFICATION_ON ? "ON
 
 const app = express();
 app.disable("x-powered-by");
-
-function esc(s) {
-  return String(s ?? "").replace(/[&<>"']/g, (c) =>
-    ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c])
-  );
-}
-
-function page(title, bodyHtml) {
-  return `<!doctype html>
-<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
-<title>${esc(title)}</title>
-<style>
-:root{color-scheme:light dark}
-body{font:16px/1.6 system-ui,sans-serif;max-width:760px;margin:3rem auto;padding:0 1.25rem}
-h1{font-size:1.6rem;margin:0 0 .25rem} .sub{opacity:.6;margin:0 0 2rem}
-h2{font-size:1rem;text-transform:uppercase;letter-spacing:.05em;opacity:.7;margin:2rem 0 .5rem;border-bottom:1px solid #8884;padding-bottom:.3rem}
-h3{font-size:.85rem;opacity:.55;margin:1.2rem 0 .3rem;font-weight:600}
-ul{list-style:none;padding:0;margin:0} li{padding:.35rem 0}
-a{font-weight:600;text-decoration:none;color:#3b82f6} a:hover{text-decoration:underline}
-.d{opacity:.65} .empty{opacity:.6}
-</style></head><body>${bodyHtml}</body></html>`;
-}
-
-function renderClientGroups(groups) {
-  let html = "";
-  for (const [clientId, rows] of groups) {
-    html += `<section><h2>${esc(clientId)}</h2><ul>`;
-    for (const r of rows) {
-      const desc = r.description ? ` &mdash; <span class="d">${esc(r.description)}</span>` : "";
-      html += `<li><a href="/${esc(r.id)}">${esc(r.title)}</a>${desc}</li>`;
-    }
-    html += `</ul></section>`;
-  }
-  return html;
-}
 
 app.get("/health", (_req, res) => res.json({ status: "ok" }));
 
@@ -77,44 +43,27 @@ app.options("/mcp", (_req, res) =>
   res.set({ "access-control-allow-origin": "*", "access-control-allow-headers": "authorization, content-type" }).status(204).end()
 );
 
-// --- Homepage index: scoped to the viewer's org (behind Cloudflare Access) ---
+// --- Gallery portal, scoped to the viewer's org (behind Cloudflare Access) ---
 app.get("/", async (req, res) => {
   const viewer = await resolveViewer(req);
   res.set("content-type", "text/html; charset=utf-8");
 
   if (!viewer.email) {
-    return res.status(403).send(page("Artifacts", `<h1>Artifacts</h1><p class="empty">Not signed in.</p>`));
+    return res
+      .status(403)
+      .send(`<!doctype html><meta charset="utf-8"><title>Artifacts</title><body style="font:16px system-ui;margin:4rem auto;max-width:40rem;padding:0 1.25rem"><h1>Artifacts</h1><p style="opacity:.6">Not signed in.</p></body>`);
   }
 
-  let body = `<h1>Artifacts</h1><p class="sub">Signed in as ${esc(viewer.email)}</p>`;
-
+  let sections;
   if (viewer.isAdmin) {
-    const byOrg = listAllGroupedByOrg();
-    if (byOrg.size === 0) body += `<p class="empty">No artifacts published yet.</p>`;
-    for (const [org, rows] of byOrg) {
-      body += `<h2>org: ${esc(org)}</h2>`;
-      const byClient = new Map();
-      for (const r of rows) {
-        if (!byClient.has(r.client_id)) byClient.set(r.client_id, []);
-        byClient.get(r.client_id).push(r);
-      }
-      for (const [clientId, crows] of byClient) {
-        body += `<h3>${esc(clientId)}</h3><ul>`;
-        for (const r of crows) {
-          const desc = r.description ? ` &mdash; <span class="d">${esc(r.description)}</span>` : "";
-          body += `<li><a href="/${esc(r.id)}">${esc(r.title)}</a>${desc}</li>`;
-        }
-        body += `</ul>`;
-      }
-    }
+    sections = [...listAllGroupedByOrg().entries()].map(([org, items]) => ({ org, items }));
   } else if (viewer.org) {
-    const groups = listOrgGroupedByClient(viewer.org);
-    body += groups.size === 0 ? `<p class="empty">No artifacts for your organization yet.</p>` : renderClientGroups(groups);
+    sections = [{ org: viewer.org, items: listOrgArtifacts(viewer.org) }];
   } else {
-    body += `<p class="empty">Your account isn't mapped to an organization. Contact the owner.</p>`;
+    sections = [];
   }
 
-  res.send(page("Artifacts · neilblackman.dev", body));
+  res.send(renderGallery(viewer, sections));
 });
 
 // --- Serve a published artifact by id, scoped to the viewer's org ---
