@@ -12,6 +12,8 @@ import {
 } from "./lib/store.js";
 import { resolveViewer, JWT_VERIFICATION_ON } from "./lib/identity.js";
 import { renderGallery } from "./lib/portal.js";
+import { renderSettings } from "./lib/settings.js";
+import { listKeys, createKey, revokeKey } from "./lib/keys.js";
 
 const PORT = Number(process.env.PORT || 3480);
 
@@ -64,6 +66,42 @@ app.get("/", async (req, res) => {
   }
 
   res.send(renderGallery(viewer, sections));
+});
+
+// --- Settings (admin only): manage per-org upload API keys ---
+function denyNonAdmin(viewer, res, json) {
+  const status = viewer.email ? 403 : 401;
+  const msg = viewer.email ? "Admins only" : "Not signed in";
+  json ? res.status(status).json({ error: msg }) : res.status(status).send(msg);
+  return true;
+}
+
+app.get("/settings", async (req, res) => {
+  const viewer = await resolveViewer(req);
+  if (!viewer.isAdmin) return denyNonAdmin(viewer, res, false);
+  const keys = listKeys();
+  const orgs = [...new Set(keys.map((k) => k.org))];
+  res.set("content-type", "text/html; charset=utf-8").send(renderSettings(viewer, keys, orgs));
+});
+
+app.post("/settings/keys", express.json({ limit: "64kb" }), async (req, res) => {
+  const viewer = await resolveViewer(req);
+  if (!viewer.isAdmin) return denyNonAdmin(viewer, res, true);
+  try {
+    const { clientId, org, secret } = createKey({ clientId: req.body?.clientId, org: req.body?.org });
+    console.log(`[artifact-mcp] key created ${clientId} (org=${org}) by ${viewer.email}`);
+    return res.json({ clientId, org, secret, created_at: new Date().toISOString() });
+  } catch (err) {
+    return res.status(400).json({ error: String(err.message || err) });
+  }
+});
+
+app.post("/settings/keys/:id/revoke", async (req, res) => {
+  const viewer = await resolveViewer(req);
+  if (!viewer.isAdmin) return denyNonAdmin(viewer, res, true);
+  const revoked = revokeKey(req.params.id);
+  console.log(`[artifact-mcp] key revoke ${req.params.id} by ${viewer.email} -> ${revoked}`);
+  return res.json({ id: req.params.id, revoked });
 });
 
 // --- Serve a published artifact by id, scoped to the viewer's org ---
