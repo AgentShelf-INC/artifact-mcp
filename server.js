@@ -9,7 +9,8 @@ import {
   listAllGroupedByOrg,
   getArtifactMeta,
   deleteArtifactById,
-  listOrgIds
+  listOrgIds,
+  readBundleFile
 } from "./lib/store.js";
 import { resolveViewer, JWT_VERIFICATION_ON } from "./lib/identity.js";
 import { renderGallery, renderArtifactShell, notFoundPage } from "./lib/portal.js";
@@ -106,17 +107,22 @@ app.post("/settings/keys/:id/revoke", async (req, res) => {
   return res.json({ id: req.params.id, revoked });
 });
 
-// --- Raw artifact HTML (used by gallery previews + the viewer-shell iframe) ---
+// --- Raw artifact (used by gallery previews + the viewer-shell iframe) ---
 app.get("/raw/:id", async (req, res) => {
   const id = req.params.id;
   if (isReserved(id)) return res.status(404).send(notFoundPage());
-  const found = readArtifact(id);
-  if (!found) return res.status(404).send(notFoundPage());
+  const meta = getArtifactMeta(id);
+  if (!meta) return res.status(404).send(notFoundPage());
 
   const viewer = await resolveViewer(req);
-  const allowed = viewer.isAdmin || (viewer.org && viewer.org === found.meta.org);
+  const allowed = viewer.isAdmin || (viewer.org && viewer.org === meta.org);
   if (!allowed) return res.status(404).send(notFoundPage()); // don't reveal existence across orgs
 
+  // Bundles are served under /raw/:id/ so relative links resolve.
+  if (meta.is_bundle) return res.redirect(302, `/raw/${id}/`);
+
+  const found = readArtifact(id);
+  if (!found) return res.status(404).send(notFoundPage());
   const headers = {
     "content-type": "text/html; charset=utf-8",
     "x-content-type-options": "nosniff",
@@ -124,10 +130,34 @@ app.get("/raw/:id", async (req, res) => {
     "cache-control": "private, max-age=60"
   };
   if (req.query.download !== undefined) {
-    const name = (found.meta.title || "artifact").replace(/[^\w.-]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 80) || "artifact";
+    const name = (meta.title || "artifact").replace(/[^\w.-]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 80) || "artifact";
     headers["content-disposition"] = `attachment; filename="${name}.html"`;
   }
   res.set(headers).send(found.html);
+});
+
+// --- Bundle file serving: /raw/:id/<path> (entry when path empty) ---
+app.get("/raw/:id/*", async (req, res) => {
+  const id = req.params.id;
+  const rel = req.params[0] || "";
+  if (isReserved(id)) return res.status(404).send(notFoundPage());
+  const meta = getArtifactMeta(id);
+  if (!meta || !meta.is_bundle) return res.status(404).send(notFoundPage());
+
+  const viewer = await resolveViewer(req);
+  const allowed = viewer.isAdmin || (viewer.org && viewer.org === meta.org);
+  if (!allowed) return res.status(404).send(notFoundPage());
+
+  const file = readBundleFile(id, rel);
+  if (!file) return res.status(404).send(notFoundPage());
+  res
+    .set({
+      "content-type": file.contentType,
+      "x-content-type-options": "nosniff",
+      "referrer-policy": "no-referrer",
+      "cache-control": "private, max-age=60"
+    })
+    .send(file.content);
 });
 
 // --- Viewer shell: chrome (Home, prev/next within the org, sign out) around an artifact ---
