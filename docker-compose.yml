@@ -1,0 +1,23 @@
+services:
+  artifact-mcp:
+    build: .
+    container_name: artifact-mcp
+    restart: unless-stopped
+    ports:
+      - "3480:3480"
+    env_file:
+      - .env
+    environment:
+      - PORT=3480
+      - DATA_DIR=/data
+      - PUBLIC_BASE_URL=https://artifact.neilblackman.dev
+    volumes:
+      - ./data:/data
+    healthcheck:
+      test: ["CMD", "node", "-e", "require('http').get('http://localhost:3480/health', r => process.exit(r.statusCode === 200 ? 0 : 1)).on('error', () => process.exit(1))"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 20s
+    labels:
+      - "autoheal=true"

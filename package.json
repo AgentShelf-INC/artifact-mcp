@@ -1,0 +1,14 @@
+{
+  "name": "artifact-mcp",
+  "version": "1.0.0",
+  "type": "module",
+  "description": "Hosted MCP server: authorized agents publish HTML artifacts served at artifact.neilblackman.dev/<id>",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "better-sqlite3": "^11.0.0",
+    "express": "^4.21.0",
+    "nanoid": "^5.0.0"
+  }
+}
