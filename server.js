@@ -2,7 +2,14 @@ import express from "express";
 import { seedKeysFromEnv } from "./lib/db.js";
 import { sha256Hex, checkKey } from "./lib/auth.js";
 import { handleMcp } from "./lib/mcp.js";
-import { readArtifact, isReserved, listOrgGroupedByClient, listAllGroupedByOrg } from "./lib/store.js";
+import {
+  readArtifact,
+  isReserved,
+  listOrgGroupedByClient,
+  listAllGroupedByOrg,
+  getArtifactMeta,
+  deleteArtifactById
+} from "./lib/store.js";
 import { resolveViewer, JWT_VERIFICATION_ON } from "./lib/identity.js";
 
 const PORT = Number(process.env.PORT || 3480);
@@ -129,6 +136,24 @@ app.get("/:id", async (req, res) => {
       "cache-control": "private, max-age=60"
     })
     .send(found.html);
+});
+
+// --- Delete an artifact from the portal (admin, or a viewer within their own org) ---
+// Behind Cloudflare Access -> resolveViewer() gives a verified identity.
+app.delete("/:id", async (req, res) => {
+  const id = req.params.id;
+  if (isReserved(id)) return res.status(404).json({ error: "Not found" });
+  const meta = getArtifactMeta(id);
+  if (!meta) return res.status(404).json({ error: "Not found" });
+
+  const viewer = await resolveViewer(req);
+  if (!viewer.email) return res.status(401).json({ error: "Not signed in" });
+  const allowed = viewer.isAdmin || (viewer.org && viewer.org === meta.org);
+  if (!allowed) return res.status(403).json({ error: "You can only delete artifacts in your own org" });
+
+  const deleted = deleteArtifactById(id);
+  console.log(`[artifact-mcp] delete ${id} (org=${meta.org}) by ${viewer.email} -> ${deleted}`);
+  return res.json({ id, deleted });
 });
 
 app.listen(PORT, () => console.log(`[artifact-mcp] listening on :${PORT}`));
