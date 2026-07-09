@@ -8,12 +8,14 @@ import {
   listOrgArtifacts,
   listAllGroupedByOrg,
   getArtifactMeta,
-  deleteArtifactById
+  deleteArtifactById,
+  listOrgIds
 } from "./lib/store.js";
 import { resolveViewer, JWT_VERIFICATION_ON } from "./lib/identity.js";
-import { renderGallery } from "./lib/portal.js";
+import { renderGallery, renderArtifactShell, notFoundPage } from "./lib/portal.js";
 import { renderSettings } from "./lib/settings.js";
 import { listKeys, createKey, revokeKey } from "./lib/keys.js";
+import { getReaction, setReaction, reactionsFor } from "./lib/reactions.js";
 
 const PORT = Number(process.env.PORT || 3480);
 
@@ -32,7 +34,7 @@ app.post("/mcp", express.json({ limit: "8mb" }), async (req, res) => {
     return res.status(401).json({ jsonrpc: "2.0", id: null, error: { code: -32001, message: "unauthorized" } });
   }
   try {
-    const out = await handleMcp(req.body, { clientId: auth.clientId, org: auth.org });
+    const out = await handleMcp(req.body, { clientId: auth.clientId, org: auth.org, label: auth.label });
     if (!out) return res.status(202).end();
     return res.json(out);
   } catch (err) {
@@ -65,7 +67,7 @@ app.get("/", async (req, res) => {
     sections = [];
   }
 
-  res.send(renderGallery(viewer, sections));
+  res.send(renderGallery(viewer, sections, reactionsFor(viewer.email)));
 });
 
 // --- Settings (admin only): manage per-org upload API keys ---
@@ -104,16 +106,16 @@ app.post("/settings/keys/:id/revoke", async (req, res) => {
   return res.json({ id: req.params.id, revoked });
 });
 
-// --- Serve a published artifact by id, scoped to the viewer's org ---
-app.get("/:id", async (req, res) => {
+// --- Raw artifact HTML (used by gallery previews + the viewer-shell iframe) ---
+app.get("/raw/:id", async (req, res) => {
   const id = req.params.id;
-  if (isReserved(id)) return res.status(404).send("Not found");
+  if (isReserved(id)) return res.status(404).send(notFoundPage());
   const found = readArtifact(id);
-  if (!found) return res.status(404).send("Not found");
+  if (!found) return res.status(404).send(notFoundPage());
 
   const viewer = await resolveViewer(req);
   const allowed = viewer.isAdmin || (viewer.org && viewer.org === found.meta.org);
-  if (!allowed) return res.status(404).send("Not found"); // don't reveal existence across orgs
+  if (!allowed) return res.status(404).send(notFoundPage()); // don't reveal existence across orgs
 
   res
     .set({
@@ -123,6 +125,29 @@ app.get("/:id", async (req, res) => {
       "cache-control": "private, max-age=60"
     })
     .send(found.html);
+});
+
+// --- Viewer shell: chrome (Home, prev/next within the org, sign out) around an artifact ---
+app.get("/:id", async (req, res) => {
+  const id = req.params.id;
+  if (isReserved(id)) return res.status(404).send(notFoundPage());
+  const meta = getArtifactMeta(id);
+  if (!meta) return res.status(404).send(notFoundPage());
+
+  const viewer = await resolveViewer(req);
+  const allowed = viewer.isAdmin || (viewer.org && viewer.org === meta.org);
+  if (!allowed) return res.status(404).send(notFoundPage());
+
+  const ids = listOrgIds(meta.org);
+  const i = ids.indexOf(id);
+  const nav = {
+    prevId: i > 0 ? ids[i - 1] : null,
+    nextId: i >= 0 && i < ids.length - 1 ? ids[i + 1] : null,
+    index: i >= 0 ? i + 1 : 1,
+    total: ids.length || 1
+  };
+  const reaction = getReaction(viewer.email, id);
+  res.set("content-type", "text/html; charset=utf-8").send(renderArtifactShell(meta, nav, reaction));
 });
 
 // --- Delete an artifact from the portal (admin, or a viewer within their own org) ---
@@ -141,6 +166,22 @@ app.delete("/:id", async (req, res) => {
   const deleted = deleteArtifactById(id);
   console.log(`[artifact-mcp] delete ${id} (org=${meta.org}) by ${viewer.email} -> ${deleted}`);
   return res.json({ id, deleted });
+});
+
+// --- React to an artifact (favorite / vote) — per signed-in viewer ---
+app.post("/:id/react", express.json({ limit: "8kb" }), async (req, res) => {
+  const id = req.params.id;
+  if (isReserved(id)) return res.status(404).json({ error: "Not found" });
+  const meta = getArtifactMeta(id);
+  if (!meta) return res.status(404).json({ error: "Not found" });
+
+  const viewer = await resolveViewer(req);
+  if (!viewer.email) return res.status(401).json({ error: "Not signed in" });
+  const allowed = viewer.isAdmin || (viewer.org && viewer.org === meta.org);
+  if (!allowed) return res.status(403).json({ error: "Forbidden" });
+
+  const state = setReaction(viewer.email, id, { favorite: req.body?.favorite, vote: req.body?.vote });
+  return res.json(state);
 });
 
 app.listen(PORT, () => console.log(`[artifact-mcp] listening on :${PORT}`));
