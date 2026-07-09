@@ -117,14 +117,17 @@ app.get("/raw/:id", async (req, res) => {
   const allowed = viewer.isAdmin || (viewer.org && viewer.org === found.meta.org);
   if (!allowed) return res.status(404).send(notFoundPage()); // don't reveal existence across orgs
 
-  res
-    .set({
-      "content-type": "text/html; charset=utf-8",
-      "x-content-type-options": "nosniff",
-      "referrer-policy": "no-referrer",
-      "cache-control": "private, max-age=60"
-    })
-    .send(found.html);
+  const headers = {
+    "content-type": "text/html; charset=utf-8",
+    "x-content-type-options": "nosniff",
+    "referrer-policy": "no-referrer",
+    "cache-control": "private, max-age=60"
+  };
+  if (req.query.download !== undefined) {
+    const name = (found.meta.title || "artifact").replace(/[^\w.-]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 80) || "artifact";
+    headers["content-disposition"] = `attachment; filename="${name}.html"`;
+  }
+  res.set(headers).send(found.html);
 });
 
 // --- Viewer shell: chrome (Home, prev/next within the org, sign out) around an artifact ---
