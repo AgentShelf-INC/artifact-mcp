@@ -68,10 +68,14 @@ Two access surfaces, deliberately split:
 | `GET /settings`, `POST /settings/keys`, `POST /settings/keys/:id/revoke` | admin key management |
 
 ### Key files
-`server.js` (routes) · `lib/mcp.js` (tools) · `lib/store.js` (single + bundle storage) ·
+`server.js` (production composition) · `lib/app.js` (routes) · `lib/access.js` (tenant policy) ·
+`lib/mcp.js` + `lib/contracts.js` (tools + runtime contracts) · `lib/store.js` (artifact lifecycle) ·
 `lib/auth.js` (hashed keys) · `lib/identity.js` (Access JWT → org) · `lib/keys.js` (admin key
 ops) · `lib/portal.js` (gallery + shell + 404) · `lib/settings.js` (key management page) ·
-`lib/reactions.js` (favorites/votes) · `lib/db.js` (SQLite schema).
+`lib/reactions.js` (favorites/votes) · `lib/db.js` + `lib/migrations.js` (SQLite lifecycle).
+
+For domain language, invariants, module seams, and workflows, see [`CONTEXT.md`](CONTEXT.md).
+Architectural decisions are recorded in [`docs/adr/`](docs/adr/).
 
 ## Configuration (`.env`)
 
@@ -82,6 +86,7 @@ ops) · `lib/portal.js` (gallery + shell + 404) · `lib/settings.js` (key manage
 | `ADMIN_EMAILS` / `ADMIN_EMAIL_DOMAINS` | Who sees every org |
 | `CF_ACCESS_TEAM_DOMAIN` + `CF_ACCESS_AUD` | Enable Access JWT verification (production) |
 | `MAX_ARTIFACT_BYTES` (2MB) · `MAX_BUNDLE_BYTES` (8MB) · `MAX_BUNDLE_FILES` (100) | Caps |
+| `MCP_JSON_LIMIT` | Optional JSON-envelope override; defaults above the configured bundle cap |
 
 See `.env.example`.
 
@@ -115,16 +120,23 @@ org **publish**: generate a key for it in **Settings**.
 
 - Cloudflare strips client-supplied `Cf-Access-*` headers at the edge; the app additionally
   **verifies the Access JWT**, so viewer identity (and org) can't be spoofed.
-- Served HTML lives on an isolated subdomain; every artifact is attributed to its uploading
-  key. Revoke a key to cut off a collaborator instantly.
+- The service lives on a dedicated application hostname; every artifact is attributed to its
+  uploading key. Revoke a key to cut off a collaborator instantly.
+- Every raw HTML response carries a CSP sandbox without `allow-same-origin`, including direct
+  opens and downloads. Non-HTML bundle assets keep their appropriate content types.
 - Bundle paths are sanitized (no `..`, no absolute); size/file caps enforced.
-- Not (yet) included: content scanning / CSP sandboxing of hosted HTML, rate limiting.
+- Docker build context excludes deployment secrets, persistent data, and local planning files.
+- Not included: content scanning, rate limiting, or a physically separate raw-content origin.
 
 ## Roadmap
 
+- **Replace-in-place** — update an artifact keeping the same id/URL (`update_artifact`), so
+  iterating a page doesn't break existing links or bookmarks
+- **Inline viewer feedback** — in-org viewers leave feedback on an artifact from the viewer
+  shell; the publishing agent reads and resolves it (`list_feedback` / `resolve_feedback`)
 - Admin sentiment dashboard (votes already collected)
 - Deleted-artifact tombstone page
-- Optional CSP sandboxing / content scanning for hosted HTML
+- Optional separate artifact-delivery origin and content scanning
 - Per-key rate limits and quotas; artifact TTL/expiry
 
 ## License
