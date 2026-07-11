@@ -12,11 +12,14 @@ test("raw HTML responses are sandboxed into an opaque origin", () => {
   assert.doesNotMatch(headers["content-security-policy"], /allow-same-origin/);
 });
 
-test("non-HTML bundle assets are not assigned a document sandbox policy", () => {
-  const headers = rawArtifactHeaders("text/css; charset=utf-8");
+test("non-HTML bundle assets keep their content type but are still sandboxed", () => {
+  // .svg / .xml execute scripts when navigated to directly, so the sandbox CSP is applied
+  // to every content type, not just text/html. Content type itself is preserved.
+  const headers = rawArtifactHeaders("image/svg+xml");
 
-  assert.equal(headers["content-security-policy"], undefined);
-  assert.equal(headers["content-type"], "text/css; charset=utf-8");
+  assert.equal(headers["content-security-policy"], "sandbox allow-scripts allow-popups allow-forms allow-modals");
+  assert.doesNotMatch(headers["content-security-policy"], /allow-same-origin/);
+  assert.equal(headers["content-type"], "image/svg+xml");
 });
 
 test("download responses retain sandboxing and attachment disposition", () => {

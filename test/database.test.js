@@ -4,6 +4,9 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import Database from "better-sqlite3";
+import { LATEST_SCHEMA_VERSION } from "../lib/migrations.js";
+
+const ALL_VERSIONS = Array.from({ length: LATEST_SCHEMA_VERSION }, (_, i) => i + 1);
 
 const importDataDir = mkdtempSync(path.join(tmpdir(), "artifact-db-import-"));
 process.env.DATA_DIR = importDataDir;
@@ -20,7 +23,7 @@ test("fresh databases apply ordered migrations with foreign keys enabled", () =>
 
   try {
     const versions = runtime.db.prepare("SELECT version FROM schema_migrations ORDER BY version").pluck().all();
-    assert.deepEqual(versions, [1, 2, 3]);
+    assert.deepEqual(versions, ALL_VERSIONS);
     assert.equal(runtime.db.pragma("foreign_keys", { simple: true }), 1);
     const foreignKeys = runtime.db.prepare("PRAGMA foreign_key_list(reactions)").all();
     assert.ok(foreignKeys.some((fk) => fk.table === "artifacts" && fk.on_delete === "CASCADE"));
@@ -38,7 +41,7 @@ test("reopening a migrated database is idempotent", () => {
 
   try {
     const versions = second.db.prepare("SELECT version FROM schema_migrations ORDER BY version").pluck().all();
-    assert.deepEqual(versions, [1, 2, 3]);
+    assert.deepEqual(versions, ALL_VERSIONS);
   } finally {
     second.db.close();
     rmSync(dataDir, { recursive: true, force: true });

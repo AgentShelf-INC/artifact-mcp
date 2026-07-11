@@ -87,6 +87,56 @@ test("failed finalization compensates metadata and staged files", () => {
   }
 });
 
+test("a failed in-place update reverts metadata and preserves the old body", () => {
+  const dataDir = mkdtempSync(path.join(tmpdir(), "artifact-store-update-fail-"));
+  const runtime = openDatabase({ dataDir });
+  const store = createArtifactStore({ db: runtime.db, artifactDir: runtime.artifactDir, idFactory: () => "upd123" });
+
+  try {
+    store.publish({ clientId: "publisher", org: "acme", html: "<h1>V1</h1>", title: "V1" });
+
+    // A second store over the same data whose rename always fails simulates a crash during
+    // the body swap. Metadata is committed first, so the swap failure must compensate.
+    const failing = createArtifactStore({
+      db: runtime.db,
+      artifactDir: runtime.artifactDir,
+      files: { ...fs, renameSync: () => { throw new Error("simulated rename failure"); } }
+    });
+    assert.throws(
+      () => failing.update({ id: "upd123", clientId: "publisher", html: "<h1>V2</h1>", title: "V2" }),
+      /simulated rename failure/
+    );
+
+    const row = runtime.db.prepare("SELECT title, revision FROM artifacts WHERE id = 'upd123'").get();
+    assert.equal(row.title, "V1");
+    assert.equal(row.revision, 1);
+    assert.equal(store.readArtifact("upd123").html, "<h1>V1</h1>");
+    assert.deepEqual(readdirSync(runtime.artifactDir).filter((name) => name.startsWith(".")), []);
+  } finally {
+    runtime.db.close();
+    rmSync(dataDir, { recursive: true, force: true });
+  }
+});
+
+test("only admin keys may delete an artifact owned by a different key", () => {
+  const dataDir = mkdtempSync(path.join(tmpdir(), "artifact-store-admin-delete-"));
+  const runtime = openDatabase({ dataDir });
+  const store = createArtifactStore({ db: runtime.db, artifactDir: runtime.artifactDir, idFactory: () => "own123" });
+
+  try {
+    store.publish({ clientId: "owner", org: "acme", html: "<h1>Owned</h1>" });
+
+    assert.equal(store.remove({ id: "own123", clientId: "intruder" }), false);
+    assert.equal(runtime.db.prepare("SELECT COUNT(*) FROM artifacts WHERE id = 'own123'").pluck().get(), 1);
+
+    assert.equal(store.remove({ id: "own123", clientId: "intruder", isAdmin: true }), true);
+    assert.equal(runtime.db.prepare("SELECT COUNT(*) FROM artifacts WHERE id = 'own123'").pluck().get(), 0);
+  } finally {
+    runtime.db.close();
+    rmSync(dataDir, { recursive: true, force: true });
+  }
+});
+
 test("artifact deletion removes bodies, metadata, and reactions together", () => {
   const dataDir = mkdtempSync(path.join(tmpdir(), "artifact-store-delete-"));
   const runtime = openDatabase({ dataDir });

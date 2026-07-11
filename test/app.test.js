@@ -24,6 +24,7 @@ function dependencies(overrides = {}) {
       forViewer: () => new Map(),
       sentiment: () => new Map()
     },
+    feedback: { listForArtifact: () => [] },
     pages: {
       gallery: () => "gallery",
       shell: () => "shell",
@@ -141,7 +142,9 @@ test("same-org raw HTML is served with an opaque-origin sandbox", async () => {
   });
 });
 
-test("bundle assets retain their own content type without a document sandbox header", async () => {
+test("bundle assets keep their content type but still receive the opaque-origin sandbox", async () => {
+  // An uploaded .svg/.xml executes scripts on direct navigation, so EVERY raw response —
+  // not just text/html — must carry the sandbox CSP. The content type is still preserved.
   const artifact = { id: "abc123", org: "acme", title: "Bundle", client_id: "publisher", is_bundle: 1, entry: "index.html" };
   const base = dependencies({
     resolveViewer: async () => ({ email: "member@acme.test", org: "acme", isAdmin: false })
@@ -149,14 +152,15 @@ test("bundle assets retain their own content type without a document sandbox hea
   base.artifacts = {
     ...base.artifacts,
     getArtifactMeta: () => artifact,
-    readBundleFile: () => ({ content: Buffer.from("body{}"), contentType: "text/css; charset=utf-8" })
+    readBundleFile: () => ({ content: Buffer.from("<svg xmlns='http://www.w3.org/2000/svg'><script>0</script></svg>"), contentType: "image/svg+xml" })
   };
 
   await serve(createApp(base), async (baseUrl) => {
-    const response = await fetch(`${baseUrl}/raw/abc123/site.css`);
+    const response = await fetch(`${baseUrl}/raw/abc123/logo.svg`);
     assert.equal(response.status, 200);
-    assert.equal(response.headers.get("content-security-policy"), null);
-    assert.match(response.headers.get("content-type"), /^text\/css/);
+    assert.match(response.headers.get("content-security-policy"), /sandbox/);
+    assert.doesNotMatch(response.headers.get("content-security-policy"), /allow-same-origin/);
+    assert.match(response.headers.get("content-type"), /^image\/svg\+xml/);
   });
 });
 
