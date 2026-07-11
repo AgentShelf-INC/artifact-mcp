@@ -9,6 +9,7 @@ import { resolveViewer, JWT_VERIFICATION_ON } from "./lib/identity.js";
 import { renderGallery, renderArtifactShell, notFoundPage } from "./lib/portal.js";
 import { renderSettings } from "./lib/settings.js";
 import { listKeys, createKey, revokeKey } from "./lib/keys.js";
+import * as orgs from "./lib/orgs.js";
 import { getReaction, setReaction, reactionsFor, sentimentMap } from "./lib/reactions.js";
 import { addFeedback, listForArtifact as feedbackForArtifact } from "./lib/feedback.js";
 
@@ -33,6 +34,17 @@ const app = createApp({
   resolveViewer,
   artifacts: artifactStore,
   keys: { list: listKeys, create: createKey, revoke: revokeKey },
+  orgs: {
+    list: orgs.listOrgs,
+    names: orgs.listOrgNames,
+    has: orgs.orgExists,
+    create: orgs.createOrg,
+    remove: orgs.deleteOrg,
+    addDomain: orgs.addDomain,
+    removeDomain: orgs.removeDomain,
+    addCategory: orgs.addCategory,
+    removeCategory: orgs.removeCategory
+  },
   reactions: { get: getReaction, set: setReaction, forViewer: reactionsFor, sentiment: sentimentMap },
   feedback: { add: addFeedback, listForArtifact: feedbackForArtifact },
   pages: { gallery: renderGallery, shell: renderArtifactShell, notFound: notFoundPage, settings: renderSettings },

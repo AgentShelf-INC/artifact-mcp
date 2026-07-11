@@ -18,6 +18,17 @@ function dependencies(overrides = {}) {
       deleteArtifactById: () => true
     },
     keys: { list: () => [], create: () => ({}), revoke: () => false },
+    orgs: {
+      list: () => [],
+      names: () => [],
+      has: () => true,
+      create: () => ({}),
+      remove: () => true,
+      addDomain: () => ({}),
+      removeDomain: () => true,
+      addCategory: () => ({}),
+      removeCategory: () => true
+    },
     reactions: {
       get: () => ({ favorite: 0, vote: 0 }),
       set: () => ({ favorite: 0, vote: 0 }),
@@ -100,6 +111,60 @@ test("publisher-key creation preserves its display label", async () => {
     assert.equal(response.status, 200);
     assert.deepEqual(received, { clientId: "agent-one", org: "acme", label: "Acme research agent" });
     assert.equal((await response.json()).label, "Acme research agent");
+  });
+});
+
+test("non-admins cannot create organizations", async () => {
+  let created = 0;
+  const base = dependencies({
+    resolveViewer: async () => ({ email: "member@acme.test", org: "acme", isAdmin: false })
+  });
+  base.orgs = { ...base.orgs, create() { created += 1; return {}; } };
+  await serve(createApp(base), async (baseUrl) => {
+    const response = await fetch(`${baseUrl}/settings/orgs`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ name: "sneaky" })
+    });
+    assert.equal(response.status, 403);
+    assert.equal(created, 0);
+  });
+});
+
+test("admins create organizations through the registry", async () => {
+  let received;
+  const base = dependencies({
+    resolveViewer: async () => ({ email: "admin@example.test", org: "admin", isAdmin: true })
+  });
+  base.orgs = {
+    ...base.orgs,
+    create(input) { received = input; return { name: input.name, label: "", domains: [], categories: [], keyCount: 0 }; }
+  };
+  await serve(createApp(base), async (baseUrl) => {
+    const response = await fetch(`${baseUrl}/settings/orgs`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ name: "newco", domain: "newco.test" })
+    });
+    assert.equal(response.status, 200);
+    assert.deepEqual(received, { name: "newco", domain: "newco.test", label: undefined });
+    assert.equal((await response.json()).name, "newco");
+  });
+});
+
+test("issuing a key to an unregistered org is refused", async () => {
+  const base = dependencies({
+    resolveViewer: async () => ({ email: "admin@example.test", org: "admin", isAdmin: true })
+  });
+  base.orgs = { ...base.orgs, has: () => false, create: () => ({}) };
+  await serve(createApp(base), async (baseUrl) => {
+    const response = await fetch(`${baseUrl}/settings/keys`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ clientId: "x", org: "ghost", label: "" })
+    });
+    assert.equal(response.status, 400);
+    assert.match((await response.json()).error, /Unknown organization/);
   });
 });
 
