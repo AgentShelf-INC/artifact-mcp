@@ -1,0 +1,13 @@
+.env
+.env.*
+!.env.example
+data/
+.git/
+.local/
+node_modules/
+coverage/
+*.log
+*.bak
+*.bak-*
+*.tmp
+.DS_Store

@@ -4,7 +4,8 @@
   "type": "module",
   "description": "Hosted MCP server: authorized agents publish HTML artifacts served at artifact.neilblackman.dev/<id>",
   "scripts": {
-    "start": "node server.js"
+    "start": "node server.js",
+    "test": "node --test --test-concurrency=1"
   },
   "dependencies": {
     "better-sqlite3": "^11.0.0",
