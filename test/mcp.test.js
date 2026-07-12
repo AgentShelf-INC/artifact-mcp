@@ -53,12 +53,14 @@ test("list_feedback exposes anchor reliability while keeping ownership and resol
   const { addFeedback } = await import("../lib/feedback.js");
   const row = addFeedback({
     artifactId, org: "acme", viewerEmail: "viewer@acme.test", body: "At the chart", artifactRevision: 1,
-    anchor: { path: "body:nth-child(2)", x: 0.2, y: 0.8, approx: true }
+    anchor: { path: "body:nth-child(2)", x: 0.2, y: 0.8, w: 0.3, h: 0.1, approx: true }
   });
 
   const listed = await call("list_feedback", { id: artifactId }, 7);
   assert.deepEqual(listed.result.structuredContent.feedback[0].anchor_path, "body:nth-child(2)");
   assert.equal(listed.result.structuredContent.feedback[0].anchor_approx, 1);
+  assert.equal(listed.result.structuredContent.feedback[0].anchor_w, 0.3);
+  assert.equal(listed.result.structuredContent.feedback[0].anchor_h, 0.1);
   assert.equal(listed.result.structuredContent.feedback[0].artifact_revision, 1);
   assert.equal(listed.result.structuredContent.feedback[0].parent_id, null);
 

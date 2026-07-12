@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { rawArtifactHeaders, injectAnchorBridge, ANCHOR_BRIDGE_MARKER } from "../lib/artifact-http.js";
+import { rawArtifactHeaders, injectAnchorBridge, ANCHOR_BRIDGE_MARKER, ANCHOR_BRIDGE } from "../lib/artifact-http.js";
 
 test("anchor bridge injects before the real (last) </body>, not one inside a script string", () => {
   const html = '<html><body><script>var x = "</body>";</script><p>hi</p></body></html>';
@@ -17,6 +17,14 @@ test("anchor bridge appends when there is no </body>", () => {
   const out = injectAnchorBridge("<p>no body tag here</p>");
   assert.ok(out.endsWith("</script>"));
   assert.ok(out.includes(ANCHOR_BRIDGE_MARKER));
+});
+
+test("anchor bridge handles pointer drag boxes as well as click points", () => {
+  assert.match(ANCHOR_BRIDGE, /pointerdown/);
+  assert.match(ANCHOR_BRIDGE, /pointermove/);
+  assert.match(ANCHOR_BRIDGE, /pointerup/);
+  assert.match(ANCHOR_BRIDGE, /w:bw,h:bh/);
+  assert.match(ANCHOR_BRIDGE, /data-artifact-anchor-selection/);
 });
 
 test("raw HTML responses are sandboxed into an opaque origin", () => {
