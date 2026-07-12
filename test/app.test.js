@@ -289,6 +289,44 @@ test("same-org raw HTML is served with an opaque-origin sandbox", async () => {
   });
 });
 
+test("raw and download HTML stay byte-for-byte original while the anchor variant adds only the bridge", async () => {
+  const app = createApp(dependencies({
+    resolveViewer: async () => ({ email: "member@acme.test", org: "acme", isAdmin: false })
+  }));
+
+  await serve(app, async (baseUrl) => {
+    const raw = await fetch(`${baseUrl}/raw/abc123`);
+    const download = await fetch(`${baseUrl}/raw/abc123?download`);
+    const anchored = await fetch(`${baseUrl}/raw/abc123?anchor=1`);
+    assert.equal(await raw.text(), "<h1>Artifact</h1>");
+    assert.equal(await download.text(), "<h1>Artifact</h1>");
+    assert.match(await anchored.text(), /artifact-anchor-bridge/);
+  });
+});
+
+test("feedback derives organization and revision from the artifact, not request anchor metadata", async () => {
+  let received;
+  const artifact = { id: "abc123", org: "acme", title: "Artifact", client_id: "publisher", is_bundle: 0, revision: 7 };
+  const base = dependencies({ resolveViewer: async () => ({ email: "member@acme.test", org: "acme", isAdmin: false }) });
+  base.artifacts = { ...base.artifacts, getArtifactMeta: () => artifact };
+  base.feedback = {
+    listForArtifact: () => [],
+    add(input) {
+      received = input;
+      return { id: "feedback1", viewer_email: input.viewerEmail, body: input.body, created_at: "2026-07-12", artifact_revision: input.artifactRevision, anchor_path: input.anchor.path, anchor_x: input.anchor.x, anchor_y: input.anchor.y, anchor_approx: 0 };
+    }
+  };
+  await serve(createApp(base), async (baseUrl) => {
+    const response = await fetch(`${baseUrl}/abc123/feedback`, {
+      method: "POST", headers: { "content-type": "application/json" },
+      body: JSON.stringify({ body: "Pinned", org: "other", artifactRevision: 999, anchor: { path: "body", x: 0.5, y: 0.5 } })
+    });
+    assert.equal(response.status, 200);
+  });
+  assert.equal(received.org, "acme");
+  assert.equal(received.artifactRevision, 7);
+});
+
 test("bundle assets keep their content type but still receive the opaque-origin sandbox", async () => {
   // An uploaded .svg/.xml executes scripts on direct navigation, so EVERY raw response —
   // not just text/html — must carry the sandbox CSP. The content type is still preserved.

@@ -1,6 +1,23 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { rawArtifactHeaders } from "../lib/artifact-http.js";
+import { rawArtifactHeaders, injectAnchorBridge, ANCHOR_BRIDGE_MARKER } from "../lib/artifact-http.js";
+
+test("anchor bridge injects before the real (last) </body>, not one inside a script string", () => {
+  const html = '<html><body><script>var x = "</body>";</script><p>hi</p></body></html>';
+  const out = injectAnchorBridge(html);
+  const bridgeAt = out.indexOf(ANCHOR_BRIDGE_MARKER);
+  assert.ok(bridgeAt > -1, "bridge injected");
+  assert.equal(out.split(ANCHOR_BRIDGE_MARKER).length - 1, 1, "injected exactly once");
+  // the script string's </body> stays ahead of the bridge; the bridge sits before the LAST </body>
+  assert.ok(out.indexOf("</body>") < bridgeAt, "the earlier (in-script) </body> is untouched");
+  assert.ok(bridgeAt < out.lastIndexOf("</body>"), "bridge is before the final </body>");
+});
+
+test("anchor bridge appends when there is no </body>", () => {
+  const out = injectAnchorBridge("<p>no body tag here</p>");
+  assert.ok(out.endsWith("</script>"));
+  assert.ok(out.includes(ANCHOR_BRIDGE_MARKER));
+});
 
 test("raw HTML responses are sandboxed into an opaque origin", () => {
   const headers = rawArtifactHeaders("text/html; charset=utf-8");
