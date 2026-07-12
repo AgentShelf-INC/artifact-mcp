@@ -35,12 +35,22 @@ multi-tenancy.
 
 | Tool | Purpose |
 |---|---|
-| `publish_artifact(html, title, description, org?)` | Publish one self-contained HTML page |
-| `publish_bundle(files, entry?, title, description, org?)` | Publish a multi-file artifact; `files` is `{ "path": "content" }` |
+| `publish_artifact(html, title, description, category, org)` | Publish one self-contained HTML page |
+| `publish_bundle(files, entry, title, description, category, org)` | Publish a multi-file artifact; `files` is `{ "path": "content" }` |
 | `list_artifacts()` | List what this key has published (with URLs) |
-| `delete_artifact(id)` | Delete one of this key's artifacts |
+| `delete_artifact(id)` | Delete an artifact (owner or admin) |
+| `update_artifact(id, html\|files, entry, title, description, category)` | Replace content and/or metadata in place; bumps its revision (owner or admin) |
+| `list_revisions(id)` | List an artifact's retained version history (owner or admin) |
+| `restore_artifact(id, revision)` | Restore a past revision as a new revision (owner or admin) |
+| `list_feedback(id?)` | List viewer feedback, optionally for one artifact (owner or admin; admin sees all) |
+| `resolve_feedback(feedback_id)` | Mark viewer feedback resolved (owner or admin) |
 
-`org` is honored only for **admin** keys (target any org); org keys are locked to their own org.
+All MCP tools use `Authorization: Bearer <API key>`. Org keys are locked to their own org; an
+**admin** key may target any org with the `org` argument and can see all feedback. Tools that
+mutate an artifact or read another owner's artifact data require the artifact owner or an admin.
+
+> MCP clients cache `tools/list` at connect — after a server update, reconnect the integration to
+> pick up new tools/fields.
 
 ## Architecture
 
