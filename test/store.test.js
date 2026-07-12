@@ -111,7 +111,75 @@ test("a failed in-place update reverts metadata and preserves the old body", () 
     assert.equal(row.title, "V1");
     assert.equal(row.revision, 1);
     assert.equal(store.readArtifact("upd123").html, "<h1>V1</h1>");
-    assert.deepEqual(readdirSync(runtime.artifactDir).filter((name) => name.startsWith(".")), []);
+    assert.deepEqual(readdirSync(runtime.artifactDir).filter((n) => n.includes(".staging-") || n.includes(".trash-")), []);
+  } finally {
+    runtime.db.close();
+    rmSync(dataDir, { recursive: true, force: true });
+  }
+});
+
+test("updates capture history and a past revision can be restored", () => {
+  const dataDir = mkdtempSync(path.join(tmpdir(), "artifact-store-history-"));
+  const runtime = openDatabase({ dataDir });
+  const store = createArtifactStore({ db: runtime.db, artifactDir: runtime.artifactDir, idFactory: () => "hist123" });
+
+  try {
+    store.publish({ clientId: "publisher", org: "acme", html: "<h1>V1</h1>", title: "One" });
+    store.update({ id: "hist123", clientId: "publisher", html: "<h1>V2</h1>", title: "Two" });
+    store.update({ id: "hist123", clientId: "publisher", html: "<h1>V3</h1>", title: "Three" });
+
+    // Live is revision 3; history holds the outgoing revisions 1 and 2.
+    const h = store.listRevisions("hist123");
+    assert.equal(h.current, 3);
+    assert.deepEqual(h.revisions.map((r) => r.revision), [2, 1]);
+    assert.equal(store.readArtifact("hist123").html, "<h1>V3</h1>");
+    assert.equal(store.readHistoryArtifact("hist123", 1).html, "<h1>V1</h1>");
+
+    // Restore v1 -> becomes a NEW revision 4 with v1's content; history now has 1,2,3.
+    const result = store.restore({ id: "hist123", clientId: "publisher", revision: 1 });
+    assert.equal(result.ok, true);
+    assert.equal(result.revision, 4);
+    assert.equal(result.restoredFrom, 1);
+    assert.equal(store.readArtifact("hist123").html, "<h1>V1</h1>");
+    assert.deepEqual(store.listRevisions("hist123").revisions.map((r) => r.revision), [3, 2, 1]);
+  } finally {
+    runtime.db.close();
+    rmSync(dataDir, { recursive: true, force: true });
+  }
+});
+
+test("history is capped at maxHistory and pruned oldest-first", () => {
+  const dataDir = mkdtempSync(path.join(tmpdir(), "artifact-store-hcap-"));
+  const runtime = openDatabase({ dataDir });
+  const store = createArtifactStore({ db: runtime.db, artifactDir: runtime.artifactDir, idFactory: () => "cap123", maxHistory: 2 });
+
+  try {
+    store.publish({ clientId: "publisher", org: "acme", html: "<h1>r1</h1>" });
+    for (let i = 2; i <= 6; i++) store.update({ id: "cap123", clientId: "publisher", html: `<h1>r${i}</h1>` });
+    // Live is r6; only the newest 2 outgoing revisions (5, 4) are retained.
+    const revs = store.listRevisions("cap123").revisions.map((r) => r.revision);
+    assert.deepEqual(revs, [5, 4]);
+    assert.equal(store.readHistoryArtifact("cap123", 3), null); // pruned
+    assert.equal(store.readHistoryArtifact("cap123", 5).html, "<h1>r5</h1>");
+  } finally {
+    runtime.db.close();
+    rmSync(dataDir, { recursive: true, force: true });
+  }
+});
+
+test("deleting an artifact removes its history rows and bodies", () => {
+  const dataDir = mkdtempSync(path.join(tmpdir(), "artifact-store-hdel-"));
+  const runtime = openDatabase({ dataDir });
+  const store = createArtifactStore({ db: runtime.db, artifactDir: runtime.artifactDir, idFactory: () => "del123" });
+
+  try {
+    store.publish({ clientId: "publisher", org: "acme", html: "<h1>a</h1>" });
+    store.update({ id: "del123", clientId: "publisher", html: "<h1>b</h1>" });
+    assert.equal(runtime.db.prepare("SELECT COUNT(*) c FROM artifact_revisions WHERE artifact_id='del123'").get().c, 1);
+
+    assert.equal(store.deleteArtifactById("del123"), true);
+    assert.equal(runtime.db.prepare("SELECT COUNT(*) c FROM artifact_revisions WHERE artifact_id='del123'").get().c, 0);
+    assert.equal(existsSync(path.join(runtime.artifactDir, ".history", "del123")), false);
   } finally {
     runtime.db.close();
     rmSync(dataDir, { recursive: true, force: true });

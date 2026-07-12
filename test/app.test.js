@@ -15,7 +15,11 @@ function dependencies(overrides = {}) {
       listOrgArtifacts: () => [],
       listAllGroupedByOrg: () => new Map(),
       listOrgIds: () => [artifact.id],
-      deleteArtifactById: () => true
+      deleteArtifactById: () => true,
+      listRevisions: () => ({ current: 1, revisions: [] }),
+      restoreArtifactRevision: () => ({ ok: true, id: artifact.id, revision: 2, restoredFrom: 1 }),
+      readHistoryArtifact: () => null,
+      readHistoryBundleFile: () => null
     },
     keys: { list: () => [], create: () => ({}), revoke: () => false },
     orgs: {
