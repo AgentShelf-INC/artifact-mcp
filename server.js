@@ -12,6 +12,8 @@ import { listKeys, createKey, revokeKey } from "./lib/keys.js";
 import * as orgs from "./lib/orgs.js";
 import { getReaction, setReaction, reactionsFor, sentimentMap } from "./lib/reactions.js";
 import { addFeedback, listForArtifact as feedbackForArtifact } from "./lib/feedback.js";
+import * as webhooks from "./lib/webhooks.js";
+import * as notify from "./lib/notify.js";
 
 const PORT = Number(process.env.PORT || 3480);
 
@@ -45,6 +47,8 @@ const app = createApp({
     addCategory: orgs.addCategory,
     removeCategory: orgs.removeCategory
   },
+  webhooks,
+  notify,
   reactions: { get: getReaction, set: setReaction, forViewer: reactionsFor, sentiment: sentimentMap },
   feedback: { add: addFeedback, listForArtifact: feedbackForArtifact },
   pages: { gallery: renderGallery, shell: renderArtifactShell, notFound: notFoundPage, settings: renderSettings },
