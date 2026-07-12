@@ -38,6 +38,56 @@ test("single-file publication exposes metadata and body without staging residue"
   }
 });
 
+test("hidden artifacts are excluded from member listings and navigation but remain available to admins", () => {
+  const dataDir = mkdtempSync(path.join(tmpdir(), "artifact-store-visibility-"));
+  const runtime = openDatabase({ dataDir });
+  const store = createArtifactStore({ db: runtime.db, artifactDir: runtime.artifactDir, idFactory: () => "hidden1" });
+
+  try {
+    store.publish({ clientId: "publisher", org: "acme", html: "<h1>Hidden</h1>" });
+    store.setHidden("hidden1", true);
+    assert.deepEqual(store.listOrgArtifacts("acme").map((row) => row.id), []);
+    assert.deepEqual(store.listOrgIds("acme"), []);
+    assert.deepEqual(store.listOrgArtifacts("acme", { includeHidden: true }).map((row) => row.id), ["hidden1"]);
+    assert.deepEqual(store.listOrgIds("acme", { includeHidden: true }), ["hidden1"]);
+  } finally {
+    runtime.db.close();
+    rmSync(dataDir, { recursive: true, force: true });
+  }
+});
+
+test("moving an artifact re-tenants every composite-FK child atomically", () => {
+  const dataDir = mkdtempSync(path.join(tmpdir(), "artifact-store-move-"));
+  const runtime = openDatabase({ dataDir });
+  const store = createArtifactStore({
+    db: runtime.db,
+    artifactDir: runtime.artifactDir,
+    idFactory: () => "moved1",
+    orgExists: (org) => org === "acme" || org === "beta"
+  });
+
+  try {
+    store.publish({ clientId: "publisher", org: "acme", html: "<h1>One</h1>", category: "Reports" });
+    store.update({ id: "moved1", clientId: "publisher", html: "<h1>Two</h1>" }); // creates a revision row
+    runtime.db.prepare("INSERT INTO feedback (id, artifact_id, org, viewer_email, body, artifact_revision) VALUES (?, ?, ?, ?, ?, ?)")
+      .run("feedback1", "moved1", "acme", "viewer@acme.test", "Looks good", 2);
+    runtime.db.prepare("INSERT INTO artifact_views (artifact_id, org, email) VALUES (?, ?, ?)")
+      .run("moved1", "acme", "viewer@acme.test");
+
+    assert.deepEqual(store.moveArtifactToOrg("moved1", "beta"), { ok: true, id: "moved1", org: "beta", category: "Reports" });
+    for (const table of ["artifacts", "feedback", "artifact_revisions", "artifact_views"]) {
+      const idColumn = table === "artifacts" ? "id" : "artifact_id";
+      assert.equal(runtime.db.prepare(`SELECT COUNT(*) AS n FROM ${table} WHERE ${idColumn} = ? AND org = 'acme'`).get("moved1").n, 0, `${table} has no old-org rows`);
+      assert.ok(runtime.db.prepare(`SELECT COUNT(*) AS n FROM ${table} WHERE ${idColumn} = ? AND org = 'beta'`).get("moved1").n > 0, `${table} moved to beta`);
+    }
+    assert.equal(runtime.db.pragma("foreign_key_check").length, 0);
+    assert.throws(() => store.moveArtifactToOrg("moved1", "ghost"), /Unknown organization/);
+  } finally {
+    runtime.db.close();
+    rmSync(dataDir, { recursive: true, force: true });
+  }
+});
+
 test("bundle publication exposes the selected entry and linked assets atomically", () => {
   const dataDir = mkdtempSync(path.join(tmpdir(), "artifact-store-bundle-"));
   const runtime = openDatabase({ dataDir });

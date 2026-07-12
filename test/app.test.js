@@ -81,6 +81,38 @@ test("administrators can open artifacts across organizations", async () => {
   });
 });
 
+test("hidden direct URLs still render, while visibility mutations use artifact access", async () => {
+  const artifact = { id: "abc123", org: "acme", title: "Hidden", client_id: "publisher", is_bundle: 0, hidden: 1 };
+  let hidden;
+  const base = dependencies({
+    resolveViewer: async () => ({ email: "member@acme.test", org: "acme", isAdmin: false })
+  });
+  base.artifacts = { ...base.artifacts, getArtifactMeta: () => artifact, setHidden(_id, next) { hidden = next; return { ok: true, id: artifact.id, hidden: next }; } };
+  await serve(createApp(base), async (baseUrl) => {
+    assert.equal((await fetch(`${baseUrl}/abc123`)).status, 200);
+    const allowed = await fetch(`${baseUrl}/abc123/visibility`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ hidden: false }) });
+    assert.equal(allowed.status, 200);
+    assert.equal(hidden, false);
+  });
+
+  base.resolveViewer = async () => ({ email: "member@other.test", org: "other", isAdmin: false });
+  await serve(createApp(base), async (baseUrl) => {
+    const denied = await fetch(`${baseUrl}/abc123/visibility`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ hidden: false }) });
+    assert.equal(denied.status, 403);
+  });
+});
+
+test("non-admins cannot re-tenant artifacts", async () => {
+  let moved = false;
+  const base = dependencies({ resolveViewer: async () => ({ email: "member@acme.test", org: "acme", isAdmin: false }) });
+  base.artifacts = { ...base.artifacts, moveArtifactToOrg() { moved = true; } };
+  await serve(createApp(base), async (baseUrl) => {
+    const response = await fetch(`${baseUrl}/abc123/move`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ org: "other" }) });
+    assert.equal(response.status, 403);
+    assert.equal(moved, false);
+  });
+});
+
 test("artifact shell records named member views but never records admin views", async () => {
   const calls = [];
   let shellAnalytics;
