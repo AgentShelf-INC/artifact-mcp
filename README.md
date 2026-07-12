@@ -2,34 +2,74 @@
 
 A self-hostable **MCP server that lets authorized agents publish HTML artifacts** to your own
 domain. An agent calls a tool, gets back a URL, and the page is served at
-`https://your-domain/<id>` — with an org-scoped gallery of everything published, viewer
-navigation, favorites/sentiment, and per-org key management.
+`https://your-domain/<id>` — with an org-scoped gallery of everything published, version history,
+viewer feedback, view analytics, and per-org key/notification management.
 
 Think "shareable Claude-style artifacts, hosted on infrastructure you control" — with real
-multi-tenancy.
+multi-tenancy, collaboration, and no third-party lock-in.
 
 > Live deployment: **artifact.neilblackman.dev** (VM310 Docker, behind Cloudflare Tunnel + Access).
 > Sibling of the **Context Hub** (shared LLM memory) — different service, different purpose.
 
 ## Features
 
+### Publish & content
 - **Publish via MCP** — `publish_artifact` (single self-contained HTML) and `publish_bundle`
   (multi-file: several pages that link to each other + a shared stylesheet + assets).
 - **Multi-file bundles** — files served under `/raw/:id/…` so relative links (`_shared.css`,
   cross-linked pages, images) resolve. Hosts whole interactive hubs as one artifact.
-- **Org tenancy** — each API key is locked to an org; each viewer is scoped to their org by
-  verified email domain. Cross-org requests 404. Admins see everything.
-- **Cloudflare Access front door** — humans log in (SSO); the app verifies the Access **JWT**
-  so the tenant boundary can't be spoofed. The `/mcp` upload path is Access-bypassed (agents
-  use the API key, not SSO).
-- **Gallery UI** — live-preview cards, org sections, search + org filter, download, delete.
-- **Viewer shell** — Home, prev/next within the org (+ arrow keys), favorite ♥, 👍/👎, download,
-  sign out.
-- **Favorites & sentiment** — per-viewer favorite (floats to the top of their gallery) and
-  up/down votes (aggregatable for admin insight).
-- **Settings (admin)** — generate/revoke per-org upload keys with a human display label; keys
-  are hashed, secrets shown once, revocable without a redeploy.
-- **No database server** — SQLite + files on disk. One container.
+- **Replace in place** — `update_artifact` swaps content/metadata while keeping the **same id and
+  URL**, so iterating a page never breaks existing links. Each update bumps a revision.
+- **Version history + restore** — every update snapshots the outgoing revision; browse the
+  history and restore any retained revision (`list_revisions` / `restore_artifact`). Restoring is
+  itself a new revision (append-only, undoable). Retention capped by `MAX_HISTORY`.
+
+### Multi-tenancy
+- **Org registry** — admin-managed organizations, each with a name, one or more **email domains**
+  (which auto-tenant a signed-in viewer), and a **category** list — all edited in Settings.
+- **Cloudflare Access front door** — humans log in (SSO); the app verifies the Access **JWT** so
+  the tenant boundary can't be spoofed. `/mcp` is Access-bypassed (agents use the API key).
+- **Strict isolation** — each key is locked to its org; each viewer is scoped to their org by
+  verified email domain. Cross-org requests 404. Admins see every org.
+
+### Organize
+- **Categories** — group an org's artifacts into per-category carousels; edit an artifact's
+  category from the viewer shell or by dragging its card in the gallery.
+- **Show / hide** — unlist an artifact (`set_visibility`): it drops from the gallery, carousels,
+  and prev/next nav, but its direct URL still opens for anyone with org access (unlisted, not a
+  security boundary). Admins still see hidden ones, marked.
+- **Drag to organize** — drag a card between categories within your own org (any member); admins
+  can also drag a card onto another org's section to **re-tenant** it (the artifact and all its
+  feedback, revisions, and view records move atomically).
+
+### Collaborate
+- **Viewer feedback threads** — in-org viewers leave feedback from the trusted shell; each comment
+  is its own thread with nested replies, so discussion about different items stays separate.
+- **Delete / resolve** — a viewer can delete or resolve their own comments; admins any in-org; the
+  publishing agent resolves/reopens via MCP. Resolve is reversible.
+- **Anchored comments** — pin a comment to a **point** (click) or drag a **region box** (drag) on
+  the artifact; markers scroll/resize-track the content. Older-revision pins are marked stale.
+
+### Insight
+- **View analytics** — named, Access-verified views per artifact: total views, unique viewers, and
+  who viewed (`artifact_stats`). Admin/self views excluded so counts mean real reach. Counts are
+  visible to same-org viewers; the named viewer list only to admins and the owning agent.
+- **Favorites & sentiment** — per-viewer favorite ♥ (floats to the top of their gallery) and
+  👍/👎 votes; an admin per-org "Most viewed" rollup.
+
+### Notify
+- **Per-org Discord webhooks** — register one or more webhooks per org, each subscribed to any of
+  six events (`published`, `updated`, `restored`, `deleted`, `feedback`, `resolved`). Route
+  publishes to `#artifacts` and feedback to `#feedback`, etc. URLs are validated to the Discord
+  host, stored masked, and delivery is fire-and-forget (never blocks a request). Test button.
+
+### Operate
+- **Settings (admin)** — manage orgs / domains / categories / webhooks, and generate/revoke
+  per-org upload keys with a human display label (keys hashed, secrets shown once, revocable
+  without a redeploy).
+- **Crash-safe storage** — staging→rename lifecycle, commit-then-swap updates, and startup audit
+  recovery reconcile the DB and files on disk after an interrupted operation.
+- **No database server** — SQLite (versioned migrations) + files on disk. One container.
 
 ## MCP tools (`POST /mcp`, bearer key)
 
@@ -38,16 +78,19 @@ multi-tenancy.
 | `publish_artifact(html, title, description, category, org)` | Publish one self-contained HTML page |
 | `publish_bundle(files, entry, title, description, category, org)` | Publish a multi-file artifact; `files` is `{ "path": "content" }` |
 | `list_artifacts()` | List what this key has published (with URLs) |
+| `update_artifact(id, html\|files, entry, title, description, category)` | Replace content/metadata in place; bumps its revision (owner or admin) |
+| `set_visibility(id, hidden)` | Unlist / relist an artifact (owner or admin) |
 | `delete_artifact(id)` | Delete an artifact (owner or admin) |
-| `update_artifact(id, html\|files, entry, title, description, category)` | Replace content and/or metadata in place; bumps its revision (owner or admin) |
 | `list_revisions(id)` | List an artifact's retained version history (owner or admin) |
 | `restore_artifact(id, revision)` | Restore a past revision as a new revision (owner or admin) |
-| `list_feedback(id?)` | List viewer feedback, optionally for one artifact (owner or admin; admin sees all) |
+| `artifact_stats(id)` | Views, unique viewers, and the named viewer list (owner or admin) |
+| `list_feedback(id?)` | List viewer feedback + anchors + thread structure (owner or admin; admin sees all) |
 | `resolve_feedback(feedback_id)` | Mark viewer feedback resolved (owner or admin) |
+| `reopen_feedback(feedback_id)` | Reopen a resolved comment (owner or admin) |
 
 All MCP tools use `Authorization: Bearer <API key>`. Org keys are locked to their own org; an
 **admin** key may target any org with the `org` argument and can see all feedback. Tools that
-mutate an artifact or read another owner's artifact data require the artifact owner or an admin.
+mutate an artifact or read another owner's data require the artifact owner or an admin.
 
 > MCP clients cache `tools/list` at connect — after a server update, reconnect the integration to
 > pick up new tools/fields.
@@ -62,40 +105,49 @@ Human ──(Cloudflare Access)──▶ gallery / /:id / /raw/:id/… ──┘
 
 Two access surfaces, deliberately split:
 - **Upload** (`/mcp`) — API-key auth, Access-bypassed (agents can't do interactive SSO).
-- **View** (`/`, `/:id`, `/raw/:id/…`, `/settings`) — behind Cloudflare Access; the app
-  verifies the Access JWT and scopes content to the viewer's org.
+- **View** (`/`, `/:id`, `/raw/:id/…`, `/settings`) — behind Cloudflare Access; the app verifies
+  the Access JWT and scopes content to the viewer's org.
 
 ### Routes
 | Route | Role |
 |---|---|
 | `POST /mcp` | MCP JSON-RPC (upload), API-key auth |
-| `GET /` | org-scoped gallery (admin: all orgs) |
-| `GET /:id` | viewer shell (chrome + iframe) |
-| `GET /raw/:id` | raw single-file artifact (or 302 → `/raw/:id/` for bundles) |
-| `GET /raw/:id/*` | bundle file serving (path-traversal guarded) |
+| `GET /` | org-scoped gallery (admin: all orgs, incl. empty ones as drop targets) |
+| `GET /:id` | viewer shell (chrome + sandboxed iframe) |
+| `GET /raw/:id` · `GET /raw/:id/*` | raw single-file / bundle serving (path-traversal guarded); `?anchor=1` injects the comment bridge, `?download` forces attachment |
+| `GET /raw/:id/rev/:n[/*]` | serve a past revision's body |
+| `GET /:id/history` · `POST /:id/restore` | version history + restore |
 | `POST /:id/react` | favorite / vote (per viewer) |
+| `POST /:id/feedback` · `DELETE /:id/feedback/:fid` · `POST /:id/feedback/:fid/resolve` | threaded viewer feedback (own-or-admin manage) |
+| `POST /:id/category` | set category (same-org member or admin) |
+| `POST /:id/visibility` | hide / show (same-org member or admin) |
+| `POST /:id/move` | category or org move — **admin** (org move re-tenants) |
 | `DELETE /:id` | delete (admin or same-org viewer) |
-| `GET /settings`, `POST /settings/keys`, `POST /settings/keys/:id/revoke` | admin key management |
+| `GET /settings` + `/settings/keys*` + `/settings/orgs*` (domains, categories, webhooks) | admin management (all admin-only) |
 
 ### Key files
-`server.js` (production composition) · `lib/app.js` (routes) · `lib/access.js` (tenant policy) ·
-`lib/mcp.js` + `lib/contracts.js` (tools + runtime contracts) · `lib/store.js` (artifact lifecycle) ·
-`lib/auth.js` (hashed keys) · `lib/identity.js` (Access JWT → org) · `lib/keys.js` (admin key
-ops) · `lib/portal.js` (gallery + shell + 404) · `lib/settings.js` (key management page) ·
-`lib/reactions.js` (favorites/votes) · `lib/db.js` + `lib/migrations.js` (SQLite lifecycle).
+`server.js` (composition) · `lib/app.js` (routes) · `lib/access.js` (tenant policy) ·
+`lib/identity.js` (Access JWT → org) · `lib/mcp.js` + `lib/contracts.js` (tools + runtime contracts) ·
+`lib/store.js` (artifact lifecycle, history, crash-safety) · `lib/orgs.js` (org/domain/category
+registry) · `lib/feedback.js` (threaded feedback + anchors) · `lib/views.js` (analytics) ·
+`lib/webhooks.js` + `lib/notify.js` (Discord notifications) · `lib/reactions.js` (favorites/votes) ·
+`lib/keys.js` + `lib/auth.js` (hashed keys) · `lib/portal.js` (gallery + shell + anchor bridge) ·
+`lib/settings.js` (admin page) · `lib/artifact-http.js` (raw headers + bridge) ·
+`lib/db.js` + `lib/migrations.js` (SQLite lifecycle).
 
 For domain language, invariants, module seams, and workflows, see [`CONTEXT.md`](CONTEXT.md).
-Architectural decisions are recorded in [`docs/adr/`](docs/adr/).
 
 ## Configuration (`.env`)
 
 | Var | Purpose |
 |---|---|
 | `ARTIFACT_API_KEYS` | Bootstrap keys, `clientId:org:secret` comma-separated (DB is authoritative after first boot) |
-| `ORG_EMAIL_DOMAINS` | Optional `domain:org` overrides — default: the email domain **is** the org (any Access-allowed domain auto-tenants) |
+| `ORG_EMAIL_DOMAINS` | Optional `domain:org` seeds — the registry (managed in Settings) is authoritative; default: the email domain **is** the org |
 | `ADMIN_EMAILS` / `ADMIN_EMAIL_DOMAINS` | Who sees every org |
 | `CF_ACCESS_TEAM_DOMAIN` + `CF_ACCESS_AUD` | Enable Access JWT verification (production) |
-| `MAX_ARTIFACT_BYTES` (2MB) · `MAX_BUNDLE_BYTES` (8MB) · `MAX_BUNDLE_FILES` (100) | Caps |
+| `MAX_ARTIFACT_BYTES` (2MB) · `MAX_BUNDLE_BYTES` (8MB) · `MAX_BUNDLE_FILES` (100) | Content caps |
+| `MAX_HISTORY` (20) | Retained revisions per artifact |
+| `FEEDBACK_MAX_BODY` (4000) | Max feedback length |
 | `MCP_JSON_LIMIT` | Optional JSON-envelope override; defaults above the configured bundle cap |
 
 See `.env.example`.
@@ -123,31 +175,38 @@ curl -H "Authorization: Bearer $KEY" -H 'content-type: application/json' \
 4. Copy the catch-all app's **AUD** → set `CF_ACCESS_AUD` + `CF_ACCESS_TEAM_DOMAIN`, rebuild
    → viewer identity is now JWT-verified.
 
-Onboard a viewer org: add its email domain to the Access allow-policy (auto-tenants). Let an
-org **publish**: generate a key for it in **Settings**.
+Onboard a viewer org: create it in **Settings** (name + email domain) and add that domain to the
+Access allow-policy. Let an org **publish**: generate a key for it in Settings.
 
 ## Security model
 
 - Cloudflare strips client-supplied `Cf-Access-*` headers at the edge; the app additionally
   **verifies the Access JWT**, so viewer identity (and org) can't be spoofed.
-- The service lives on a dedicated application hostname; every artifact is attributed to its
-  uploading key. Revoke a key to cut off a collaborator instantly.
-- Every raw HTML response carries a CSP sandbox without `allow-same-origin`, including direct
-  opens and downloads. Non-HTML bundle assets keep their appropriate content types.
-- Bundle paths are sanitized (no `..`, no absolute); size/file caps enforced.
-- Docker build context excludes deployment secrets, persistent data, and local planning files.
+- Every artifact is attributed to its uploading key; revoke a key to cut off a collaborator
+  instantly. Org move re-tenants an artifact and all its child rows atomically.
+- **Sandboxed rendering** — every raw response carries a CSP sandbox without `allow-same-origin`
+  (including `.svg`/`.xml` and downloads), so uploaded content runs in a null origin.
+- **Anchored-comment bridge** — the comment/position script is injected **only** into the
+  `?anchor=1` representation (raw + downloads are byte-for-byte unchanged), is a fixed server
+  constant, and the shell parent **never reads the iframe DOM**: all anchor data arrives via
+  `postMessage`, validated by frame identity and a type allowlist, and treated as untrusted.
+- **Webhooks** — URLs are validated to the Discord webhook host (no SSRF to arbitrary hosts),
+  stored/returned masked, and delivered fire-and-forget with a timeout and no redirect following.
+- **View privacy** — named viewer lists reach only admins and the owning agent; never cross-tenant.
+- Bundle paths are sanitized (no `..`, no absolute); size/file caps enforced; the Docker build
+  context excludes deployment secrets, persistent data, and local planning files.
 - Not included: content scanning, rate limiting, or a physically separate raw-content origin.
 
 ## Roadmap
 
-- **Replace-in-place** — update an artifact keeping the same id/URL (`update_artifact`), so
-  iterating a page doesn't break existing links or bookmarks
-- **Inline viewer feedback** — in-org viewers leave feedback on an artifact from the viewer
-  shell; the publishing agent reads and resolves it (`list_feedback` / `resolve_feedback`)
-- Admin sentiment dashboard (votes already collected)
-- Deleted-artifact tombstone page
+- Admin sentiment dashboard (votes + views already collected)
+- Full-text search across the library
+- Cooperative (`data-anchor`) precise anchoring; text-range highlights
+- Per-key rate limits and quotas; artifact TTL/expiry; deleted-artifact tombstone
 - Optional separate artifact-delivery origin and content scanning
-- Per-key rate limits and quotas; artifact TTL/expiry
+
+External no-login share links are intentionally **out of scope** — access is gated by org / email
+domain by design.
 
 ## License
 
