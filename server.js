@@ -11,6 +11,7 @@ import { renderSettings } from "./lib/settings.js";
 import { listKeys, createKey, revokeKey } from "./lib/keys.js";
 import * as orgs from "./lib/orgs.js";
 import { getReaction, setReaction, reactionsFor, sentimentMap } from "./lib/reactions.js";
+import * as views from "./lib/views.js";
 import { addFeedback, listForArtifact as feedbackForArtifact } from "./lib/feedback.js";
 import * as webhooks from "./lib/webhooks.js";
 import * as notify from "./lib/notify.js";
@@ -50,6 +51,7 @@ const app = createApp({
   webhooks,
   notify,
   reactions: { get: getReaction, set: setReaction, forViewer: reactionsFor, sentiment: sentimentMap },
+  views,
   feedback: { add: addFeedback, listForArtifact: feedbackForArtifact },
   pages: { gallery: renderGallery, shell: renderArtifactShell, notFound: notFoundPage, settings: renderSettings },
   healthCheck() {

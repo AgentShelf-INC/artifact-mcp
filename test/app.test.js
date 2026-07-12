@@ -81,6 +81,52 @@ test("administrators can open artifacts across organizations", async () => {
   });
 });
 
+test("artifact shell records named member views but never records admin views", async () => {
+  const calls = [];
+  let shellAnalytics;
+  const base = dependencies({
+    resolveViewer: async () => ({ email: "member@acme.test", org: "acme", isAdmin: false }),
+    views: {
+      record(...args) { calls.push(args); },
+      countsFor: () => ({ views: 3, unique_viewers: 2, last_viewed_at: "2026-07-11 12:00:00" }),
+      viewersFor: () => [{ email: "audience@acme.test" }],
+      countsForOrg: () => new Map(),
+      topForOrg: () => []
+    },
+    pages: {
+      ...dependencies().pages,
+      shell(_meta, _nav, _reaction, _feedback, analytics) { shellAnalytics = analytics; return "shell"; }
+    }
+  });
+  await serve(createApp(base), async (baseUrl) => {
+    const response = await fetch(`${baseUrl}/abc123`);
+    assert.equal(response.status, 200);
+  });
+  assert.deepEqual(calls, [["abc123", "acme", "member@acme.test"]]);
+  assert.deepEqual(shellAnalytics.viewers, null);
+
+  base.resolveViewer = async () => ({ email: "admin@example.test", org: "admin", isAdmin: true });
+  await serve(createApp(base), async (baseUrl) => {
+    const response = await fetch(`${baseUrl}/abc123`);
+    assert.equal(response.status, 200);
+  });
+  assert.equal(calls.length, 1);
+  assert.deepEqual(shellAnalytics.viewers, [{ email: "audience@acme.test" }]);
+});
+
+test("raw artifact fetches never record a view", async () => {
+  let recorded = 0;
+  const app = createApp(dependencies({
+    resolveViewer: async () => ({ email: "member@acme.test", org: "acme", isAdmin: false }),
+    views: { record() { recorded += 1; }, countsFor: () => null, countsForOrg: () => new Map(), viewersFor: () => [], topForOrg: () => [] }
+  }));
+  await serve(app, async (baseUrl) => {
+    const response = await fetch(`${baseUrl}/raw/abc123`);
+    assert.equal(response.status, 200);
+  });
+  assert.equal(recorded, 0);
+});
+
 test("unsigned artifact reads are concealed as not found", async () => {
   const app = createApp(dependencies({
     resolveViewer: async () => ({ email: "", org: "", isAdmin: false })

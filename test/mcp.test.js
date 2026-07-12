@@ -31,3 +31,18 @@ test("MCP enforces the published tool input schemas", async () => {
   assert.equal(nested.error.code, -32602);
   assert.match(nested.error.message, /files\.index\.html must be a string/);
 });
+
+test("artifact_stats exposes named audience data only to the owner or an admin", async () => {
+  const published = await call("publish_artifact", { html: "<h1>Stats</h1>" }, 3);
+  const id = published.result.structuredContent.id;
+  const { record } = await import("../lib/views.js");
+  record(id, "acme", "viewer@example.test");
+
+  const stats = await call("artifact_stats", { id }, 4);
+  assert.equal(stats.result.structuredContent.views, 1);
+  assert.deepEqual(stats.result.structuredContent.viewers.map((v) => v.email), ["viewer@example.test"]);
+
+  const denied = await handleMcp({ jsonrpc: "2.0", id: 5, method: "tools/call", params: { name: "artifact_stats", arguments: { id } } }, { clientId: "other", org: "acme" });
+  assert.equal(denied.result.isError, true);
+  assert.match(denied.result.content[0].text, /own artifacts/);
+});
