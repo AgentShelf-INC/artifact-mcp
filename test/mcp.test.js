@@ -60,6 +60,7 @@ test("list_feedback exposes anchor reliability while keeping ownership and resol
   assert.deepEqual(listed.result.structuredContent.feedback[0].anchor_path, "body:nth-child(2)");
   assert.equal(listed.result.structuredContent.feedback[0].anchor_approx, 1);
   assert.equal(listed.result.structuredContent.feedback[0].artifact_revision, 1);
+  assert.equal(listed.result.structuredContent.feedback[0].parent_id, null);
 
   const denied = await handleMcp({ jsonrpc: "2.0", id: 8, method: "tools/call", params: { name: "resolve_feedback", arguments: { feedback_id: row.id } } }, { clientId: "other", org: "acme" });
   assert.equal(denied.result.isError, true);

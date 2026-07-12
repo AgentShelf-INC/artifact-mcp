@@ -12,7 +12,7 @@ import { listKeys, createKey, revokeKey } from "./lib/keys.js";
 import * as orgs from "./lib/orgs.js";
 import { getReaction, setReaction, reactionsFor, sentimentMap } from "./lib/reactions.js";
 import * as views from "./lib/views.js";
-import { addFeedback, listForArtifact as feedbackForArtifact } from "./lib/feedback.js";
+import { addFeedback, listForArtifact as feedbackForArtifact, getFeedback, deleteFeedback, resolveByViewer } from "./lib/feedback.js";
 import * as webhooks from "./lib/webhooks.js";
 import * as notify from "./lib/notify.js";
 
@@ -52,7 +52,7 @@ const app = createApp({
   notify,
   reactions: { get: getReaction, set: setReaction, forViewer: reactionsFor, sentiment: sentimentMap },
   views,
-  feedback: { add: addFeedback, listForArtifact: feedbackForArtifact },
+  feedback: { add: addFeedback, listForArtifact: feedbackForArtifact, getFeedback, deleteFeedback, resolveByViewer },
   pages: { gallery: renderGallery, shell: renderArtifactShell, notFound: notFoundPage, settings: renderSettings },
   healthCheck() {
     db.prepare("SELECT 1").get();

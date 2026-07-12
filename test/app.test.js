@@ -327,6 +327,29 @@ test("feedback derives organization and revision from the artifact, not request 
   assert.equal(received.artifactRevision, 7);
 });
 
+test("viewer feedback management routes scope feedback to the artifact and enforce own-or-admin results", async () => {
+  const calls = [];
+  const base = dependencies({ resolveViewer: async () => ({ email: "member@acme.test", org: "acme", isAdmin: false }) });
+  base.feedback = {
+    listForArtifact: () => [],
+    getFeedback(id) {
+      return id === "foreign" ? { id, artifact_id: "other", org: "acme", viewer_email: "member@acme.test" }
+        : { id, artifact_id: "abc123", org: "acme", viewer_email: "member@acme.test" };
+    },
+    deleteFeedback(id, actor) { calls.push(["delete", id, actor]); return { ok: id !== "blocked", id, reason: id === "blocked" ? "forbidden" : undefined }; },
+    resolveByViewer(id, actor) { calls.push(["resolve", id, actor]); return { ok: id !== "blocked", id, reason: id === "blocked" ? "forbidden" : undefined }; }
+  };
+  await serve(createApp(base), async (baseUrl) => {
+    assert.equal((await fetch(`${baseUrl}/abc123/feedback/owned`, { method: "DELETE" })).status, 200);
+    assert.equal((await fetch(`${baseUrl}/abc123/feedback/foreign`, { method: "DELETE" })).status, 404);
+    assert.equal((await fetch(`${baseUrl}/abc123/feedback/blocked/resolve`, { method: "POST" })).status, 403);
+  });
+  assert.deepEqual(calls, [
+    ["delete", "owned", { viewerEmail: "member@acme.test", isAdmin: false }],
+    ["resolve", "blocked", { viewerEmail: "member@acme.test", isAdmin: false }]
+  ]);
+});
+
 test("bundle assets keep their content type but still receive the opaque-origin sandbox", async () => {
   // An uploaded .svg/.xml executes scripts on direct navigation, so EVERY raw response —
   // not just text/html — must carry the sandbox CSP. The content type is still preserved.
