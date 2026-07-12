@@ -60,9 +60,12 @@ test("viewer delete and resolve enforce ownership, admin access, and parent casc
     assert.deepEqual(feedback.deleteFeedback(reply.id, { viewerEmail: "other@acme.test", isAdmin: false }), { ok: false, reason: "forbidden" });
     assert.equal(feedback.getFeedback(reply.id).id, reply.id);
     assert.deepEqual(feedback.resolveByViewer(reply.id, { viewerEmail: "other@acme.test", isAdmin: false }), { ok: false, reason: "forbidden" });
-    assert.deepEqual(feedback.resolveByViewer(reply.id, { viewerEmail: "reply@acme.test", isAdmin: false }), { ok: true, id: reply.id });
+    assert.deepEqual(feedback.resolveByViewer(reply.id, { viewerEmail: "reply@acme.test", isAdmin: false }), { ok: true, id: reply.id, changed: true });
     assert.equal(feedback.getFeedback(reply.id).resolved_by, "reply@acme.test");
-    assert.deepEqual(feedback.resolveByViewer(parent.id, { viewerEmail: "admin@acme.test", isAdmin: true }), { ok: true, id: parent.id });
+    // A repeated resolve of an already-resolved item is a no-op transition (changed:false) so
+    // callers can avoid re-emitting a "resolved" notification.
+    assert.deepEqual(feedback.resolveByViewer(reply.id, { viewerEmail: "reply@acme.test", isAdmin: false }), { ok: true, id: reply.id, changed: false });
+    assert.deepEqual(feedback.resolveByViewer(parent.id, { viewerEmail: "admin@acme.test", isAdmin: true }), { ok: true, id: parent.id, changed: true });
     assert.equal(feedback.getFeedback(parent.id).resolved_by, "admin:admin@acme.test");
     assert.deepEqual(feedback.deleteFeedback(parent.id, { viewerEmail: "admin@acme.test", isAdmin: true }), { ok: true, id: parent.id });
     assert.equal(feedback.getFeedback(parent.id), undefined);
