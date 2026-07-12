@@ -186,6 +186,52 @@ test("deleting an artifact removes its history rows and bodies", () => {
   }
 });
 
+test("audit recovers a committed-but-uninstalled staged body after a mid-update crash", () => {
+  const dataDir = mkdtempSync(path.join(tmpdir(), "artifact-store-auditswap-"));
+  const runtime = openDatabase({ dataDir });
+  const store = createArtifactStore({ db: runtime.db, artifactDir: runtime.artifactDir, idFactory: () => "aud123" });
+
+  try {
+    store.publish({ clientId: "publisher", org: "acme", html: "<h1>V1</h1>" });
+    // Simulate a crash after the metadata commit (bytes now reflect V2) but before the body
+    // swap: the V2 body is stranded in a staging file while the final still holds V1.
+    const v2 = "<h1>V2 body is a different length</h1>";
+    runtime.db.prepare("UPDATE artifacts SET bytes = ?, revision = 2 WHERE id = 'aud123'").run(Buffer.byteLength(v2));
+    fs.writeFileSync(path.join(runtime.artifactDir, ".aud123.staging-crash"), v2);
+
+    const report = store.auditStorage({ cleanTransient: true });
+    assert.ok(report.recoveredPaths.includes(".aud123.staging-crash"));
+    assert.equal(store.readArtifact("aud123").html, v2); // committed body is now served, not lost
+    assert.deepEqual(readdirSync(runtime.artifactDir).filter((n) => n.includes(".staging-")), []);
+  } finally {
+    runtime.db.close();
+    rmSync(dataDir, { recursive: true, force: true });
+  }
+});
+
+test("audit reclaims history bodies for artifacts that no longer exist", () => {
+  const dataDir = mkdtempSync(path.join(tmpdir(), "artifact-store-orphanhist-"));
+  const runtime = openDatabase({ dataDir });
+  const store = createArtifactStore({ db: runtime.db, artifactDir: runtime.artifactDir, idFactory: () => "real99" });
+
+  try {
+    store.publish({ clientId: "publisher", org: "acme", html: "<h1>a</h1>" });
+    store.update({ id: "real99", clientId: "publisher", html: "<h1>b</h1>" }); // creates .history/real99
+    // Orphaned history for a since-deleted artifact (crash between DB delete and removeHistory).
+    const ghost = path.join(runtime.artifactDir, ".history", "ghost77");
+    fs.mkdirSync(ghost, { recursive: true });
+    fs.writeFileSync(path.join(ghost, "1.html"), "leaked");
+
+    const report = store.auditStorage({ cleanTransient: true });
+    assert.ok(report.orphanHistory.includes("ghost77"));
+    assert.equal(existsSync(ghost), false);
+    assert.equal(existsSync(path.join(runtime.artifactDir, ".history", "real99")), true); // live one kept
+  } finally {
+    runtime.db.close();
+    rmSync(dataDir, { recursive: true, force: true });
+  }
+});
+
 test("only admin keys may delete an artifact owned by a different key", () => {
   const dataDir = mkdtempSync(path.join(tmpdir(), "artifact-store-admin-delete-"));
   const runtime = openDatabase({ dataDir });

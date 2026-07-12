@@ -63,6 +63,14 @@ test("deleting an org cascades its domains and categories", () => {
   assert.deepEqual(orgs.categoriesFor("epsilon"), []);
 });
 
+test("org names are case-folded so a tenant cannot be split by casing", () => {
+  const created = orgs.createOrg({ name: "MixedCase", domain: "mixed.test" });
+  assert.equal(created.name, "mixedcase");
+  assert.equal(orgs.orgExists("mixedcase"), true);
+  assert.equal(orgs.orgForDomain("mixed.test"), "mixedcase");
+  assert.throws(() => orgs.createOrg({ name: "MIXEDCASE" }), /already exists/);
+});
+
 test("adding a domain or category to an unknown org is rejected", () => {
   assert.throws(() => orgs.addDomain("ghost", "ghost.test"), /Unknown organization/);
   assert.throws(() => orgs.addCategory("ghost", "X"), /Unknown organization/);
