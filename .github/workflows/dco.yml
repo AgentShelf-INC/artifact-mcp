@@ -1,0 +1,31 @@
+name: DCO
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+
+jobs:
+  dco:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Verify every commit is signed off
+        run: |
+          base="${{ github.event.pull_request.base.sha }}"
+          head="${{ github.event.pull_request.head.sha }}"
+          fail=0
+          for c in $(git rev-list "$base..$head"); do
+            if ! git show -s --format=%B "$c" | grep -qiE '^Signed-off-by: .+ <.+@.+>'; then
+              subject=$(git show -s --format=%s "$c")
+              echo "::error::Missing Signed-off-by: $c ($subject)"
+              fail=1
+            fi
+          done
+          if [ "$fail" -ne 0 ]; then
+            echo "DCO check failed. Sign your commits with 'git commit -s' (or amend and rebase)."
+            echo "See CONTRIBUTING.md and the DCO file for details."
+            exit 1
+          fi
+          echo "All commits are signed off. ✅"

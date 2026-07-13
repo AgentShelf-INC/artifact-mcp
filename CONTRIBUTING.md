@@ -34,6 +34,28 @@ npm test          # node --test; all suites must pass
 - Confirm `npm test` is green.
 - By contributing, you agree your contributions are licensed under the project's Apache License 2.0.
 
+## Sign your commits (DCO)
+
+This project uses the [Developer Certificate of Origin](DCO) — a lightweight statement that you
+wrote, or have the right to submit, the code you're contributing. No paperwork; you certify it by
+adding a `Signed-off-by` line to each commit.
+
+Add it automatically with the `-s` flag:
+
+```bash
+git commit -s -m "Your message"
+```
+
+That appends a trailer matching your Git `user.name` / `user.email`:
+
+```
+Signed-off-by: Jane Doe <jane@example.com>
+```
+
+Every commit in a pull request must be signed off — CI checks it. Forgot on an existing branch?
+Re-sign the last commit with `git commit -s --amend`, or a range with
+`git rebase --signoff <base>`, then force-push.
+
 ## Reporting security issues
 
 Do **not** open a public issue for a vulnerability. See [`SECURITY.md`](SECURITY.md) for private

@@ -10,6 +10,7 @@ Describe what changed and the reason for it.
 
 - [ ] `npm test` is green
 - [ ] Added/updated tests for the change
+- [ ] All commits are signed off (`git commit -s`) per the [DCO](../DCO)
 - [ ] Manual steps (list them):
 
 ## Security-sensitive?
