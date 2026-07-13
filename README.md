@@ -83,6 +83,9 @@ multi-tenancy, collaboration, and no third-party lock-in.
 | `list_artifacts()` | List what this key has published (with URLs) |
 | `update_artifact(id, html\|files, entry, title, description, category)` | Replace content/metadata in place; bumps its revision (owner or admin) |
 | `set_visibility(id, hidden)` | Unlist / relist an artifact (owner or admin) |
+| `list_categories(org?)` | List your org's categories (admin may pass an org) |
+| `set_category(id, category)` | Move an artifact to a category — no revision bump; auto-registers it (owner or admin) |
+| `create_category(name, org?)` / `delete_category(name, org?)` | Manage your org's category list (admin may pass an org) |
 | `delete_artifact(id)` | Delete an artifact (owner or admin) |
 | `list_revisions(id)` | List an artifact's retained version history (owner or admin) |
 | `restore_artifact(id, revision)` | Restore a past revision as a new revision (owner or admin) |

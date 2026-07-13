@@ -133,3 +133,28 @@ test("feedback anchor coordinates reject out-of-range values and cap paths", asy
   assert.equal(row.anchor_path.length, 512);
   assert.equal(row.anchor_approx, 1);
 });
+
+test("category tools list, set, create, and delete within the caller's org", async () => {
+  const orgs = await import("../lib/orgs.js");
+  try { orgs.createOrg({ name: "acme" }); } catch { /* already registered by an earlier test */ }
+
+  const created = await call("create_category", { name: "Dashboards" }, 60);
+  assert.deepEqual(created.result.structuredContent, { org: "acme", name: "Dashboards" });
+  const listed = await call("list_categories", {}, 61);
+  assert.ok(listed.result.structuredContent.categories.includes("Dashboards"));
+
+  const pub = await call("publish_artifact", { html: "<h1>cat</h1>" }, 62);
+  const id = pub.result.structuredContent.id;
+  const moved = await call("set_category", { id, category: "Reports" }, 63);
+  assert.equal(moved.result.structuredContent.category, "Reports");
+  // set_category auto-registers the category into the org list.
+  assert.ok((await call("list_categories", {}, 64)).result.structuredContent.categories.includes("Reports"));
+
+  assert.equal((await call("delete_category", { name: "Dashboards" }, 65)).result.structuredContent.removed, true);
+  assert.ok(!(await call("list_categories", {}, 66)).result.structuredContent.categories.includes("Dashboards"));
+
+  // A foreign key (different client) may not recategorize this artifact.
+  const denied = await handleMcp({ jsonrpc: "2.0", id: 67, method: "tools/call", params: { name: "set_category", arguments: { id, category: "Nope" } } }, { clientId: "other", org: "acme" });
+  assert.equal(denied.result.isError, true);
+  assert.match(denied.result.content[0].text, /your own artifacts/);
+});
