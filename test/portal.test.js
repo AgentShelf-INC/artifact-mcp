@@ -24,3 +24,14 @@ test("feedback drawer nests one-level replies and only renders viewer management
   const adminDrawer = adminHtml.slice(adminHtml.indexOf('<aside class="vfb-panel" id="vfb-panel"'), adminHtml.indexOf('</aside>', adminHtml.indexOf('<aside class="vfb-panel" id="vfb-panel"')));
   assert.equal((adminDrawer.match(/data-feedback-action=/g) || []).length, 4);
 });
+
+test("viewer shell includes an escaped public-share drawer", () => {
+  const dangerous = { ...meta, id: "abc123", title: "</script><img>" };
+  const html = renderArtifactShell(dangerous, nav, {}, [], {}, { email: "member@acme.test", isAdmin: false });
+  assert.match(html, /id="vshare-toggle"/);
+  assert.match(html, /24 hours/);
+  assert.match(html, /Until a date/);
+  assert.match(html, /No expiration/);
+  assert.match(html, /var shareArtifactId="abc123"/);
+  assert.doesNotMatch(html, /<script><\/script><img>/);
+});

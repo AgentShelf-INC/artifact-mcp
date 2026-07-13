@@ -70,6 +70,69 @@ test("cross-organization artifact reads are concealed as not found", async () =>
   });
 });
 
+test("public shares serve sandboxed live artifacts while invalid states are the same 404", async () => {
+  const artifact = { id: "abc123", org: "acme", title: "Artifact", client_id: "publisher", is_bundle: 0 };
+  let state = "valid";
+  const app = createApp(dependencies({
+    artifacts: { ...dependencies().artifacts, getArtifactMeta: () => artifact },
+    shares: { resolve: () => state === "valid" ? { artifact_id: "abc123", org: "acme" } : null, listForArtifact: () => [], revoke: () => false },
+    resolveViewer: async () => { throw new Error("public share must not resolve viewer"); }
+  }));
+  await serve(app, async (baseUrl) => {
+    const valid = await fetch(`${baseUrl}/s/token`);
+    assert.equal(valid.status, 200);
+    assert.match(valid.headers.get("content-security-policy"), /sandbox/);
+    assert.equal(valid.headers.get("x-robots-tag"), "noindex");
+    assert.doesNotMatch(await valid.text(), /artifact-anchor-bridge/);
+    const statuses = [];
+    for (const invalid of ["unknown", "expired", "revoked"]) {
+      state = invalid;
+      const response = await fetch(`${baseUrl}/s/token`);
+      statuses.push([response.status, await response.text()]);
+    }
+    assert.deepEqual(statuses, [[404, "not found"], [404, "not found"], [404, "not found"]]);
+  });
+});
+
+test("share management requires artifact access and bundle shares guard paths", async () => {
+  const bundle = { id: "abc123", org: "acme", title: "Bundle", client_id: "publisher", is_bundle: 1, entry: "index.html" };
+  const calls = [];
+  const base = dependencies({
+    resolveViewer: async () => ({ email: "member@acme.test", org: "acme", isAdmin: false }),
+    artifacts: {
+      ...dependencies().artifacts,
+      getArtifactMeta: () => bundle,
+      readBundleFile(_id, rel) { return rel === "index.html" || !rel ? { content: "<h1>Entry</h1>", contentType: "text/html; charset=utf-8" } : rel === "assets/site.css" ? { content: "body{}", contentType: "text/css; charset=utf-8" } : null; }
+    },
+    shares: {
+      resolve: () => ({ artifact_id: "abc123", org: "acme" }),
+      create(input) { calls.push(input); return { token: "a".repeat(24), expires_at: null }; },
+      listForArtifact: () => [],
+      revoke: () => true
+    },
+    publicBase: "https://artifact.test"
+  });
+  await serve(createApp(base), async (baseUrl) => {
+    const created = await fetch(`${baseUrl}/abc123/share`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ expires: "never" }) });
+    assert.equal(created.status, 200);
+    assert.equal((await created.json()).url, `https://artifact.test/s/${"a".repeat(24)}`);
+    const entry = await fetch(`${baseUrl}/s/token/`, { redirect: "manual" });
+    assert.equal(entry.status, 200);
+    assert.match(entry.headers.get("cache-control") || "", /no-store/); // revocation must be immediate
+    assert.equal((await fetch(`${baseUrl}/s/token/assets/site.css`)).status, 200);
+    // A missing sub-file 404s. Path-traversal containment lives in the shared readBundleFile
+    // (store-tested); the share route reuses it, so `..` escapes are rejected there.
+    assert.equal((await fetch(`${baseUrl}/s/token/missing.js`)).status, 404);
+  });
+  assert.equal(calls[0].createdBy, "member@acme.test");
+  await serve(createApp({ ...base, resolveViewer: async () => ({ email: "other@other.test", org: "other", isAdmin: false }) }), async (baseUrl) => {
+    assert.equal((await fetch(`${baseUrl}/abc123/shares`)).status, 403);
+  });
+  await serve(createApp({ ...base, resolveViewer: async () => ({ email: "", org: "", isAdmin: false }) }), async (baseUrl) => {
+    assert.equal((await fetch(`${baseUrl}/abc123/shares`)).status, 401);
+  });
+});
+
 test("administrators can open artifacts across organizations", async () => {
   const app = createApp(dependencies({
     resolveViewer: async () => ({ email: "admin@example.test", org: "admin", isAdmin: true })

@@ -73,6 +73,8 @@ test("moving an artifact re-tenants every composite-FK child atomically", () => 
       .run("feedback1", "moved1", "acme", "viewer@acme.test", "Looks good", 2);
     runtime.db.prepare("INSERT INTO artifact_views (artifact_id, org, email) VALUES (?, ?, ?)")
       .run("moved1", "acme", "viewer@acme.test");
+    runtime.db.prepare("INSERT INTO artifact_shares (token, artifact_id, org, created_by) VALUES (?, ?, ?, ?)")
+      .run("tok_move", "moved1", "acme", "viewer@acme.test");
 
     assert.deepEqual(store.moveArtifactToOrg("moved1", "beta"), { ok: true, id: "moved1", org: "beta", category: "Reports" });
     for (const table of ["artifacts", "feedback", "artifact_revisions", "artifact_views"]) {
@@ -80,6 +82,8 @@ test("moving an artifact re-tenants every composite-FK child atomically", () => 
       assert.equal(runtime.db.prepare(`SELECT COUNT(*) AS n FROM ${table} WHERE ${idColumn} = ? AND org = 'acme'`).get("moved1").n, 0, `${table} has no old-org rows`);
       assert.ok(runtime.db.prepare(`SELECT COUNT(*) AS n FROM ${table} WHERE ${idColumn} = ? AND org = 'beta'`).get("moved1").n > 0, `${table} moved to beta`);
     }
+    // An org move revokes existing public share links rather than carrying them over.
+    assert.equal(runtime.db.prepare("SELECT COUNT(*) AS n FROM artifact_shares WHERE artifact_id = 'moved1'").get().n, 0, "shares dropped on move");
     assert.equal(runtime.db.pragma("foreign_key_check").length, 0);
     assert.throws(() => store.moveArtifactToOrg("moved1", "ghost"), /Unknown organization/);
   } finally {

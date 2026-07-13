@@ -45,6 +45,28 @@ test("artifact_stats exposes named audience data only to the owner or an admin",
   const denied = await handleMcp({ jsonrpc: "2.0", id: 5, method: "tools/call", params: { name: "artifact_stats", arguments: { id } } }, { clientId: "other", org: "acme" });
   assert.equal(denied.result.isError, true);
   assert.match(denied.result.content[0].text, /own artifacts/);
+
+  // Same key, different org (i.e. after an admin re-tenanted the artifact) must NOT retain
+  // control just because client_id matches — ownership requires matching org too.
+  const movedOut = await handleMcp({ jsonrpc: "2.0", id: 51, method: "tools/call", params: { name: "artifact_stats", arguments: { id } } }, { clientId: "publisher", org: "other" });
+  assert.equal(movedOut.result.isError, true);
+  assert.match(movedOut.result.content[0].text, /own artifacts/);
+});
+
+test("share tools are owner-or-admin and revocation immediately makes a link unresolved", async () => {
+  const published = await call("publish_artifact", { html: "<h1>Shared</h1>" }, 40);
+  const artifactId = published.result.structuredContent.id;
+  const created = await call("create_share", { id: artifactId, expires: "never" }, 41);
+  const token = created.result.structuredContent.token;
+  assert.match(created.result.structuredContent.url, new RegExp(`/s/${token}$`));
+  const listed = await call("list_shares", { id: artifactId }, 42);
+  assert.equal(listed.result.structuredContent.shares.some((row) => row.token === token), true);
+  const denied = await handleMcp({ jsonrpc: "2.0", id: 43, method: "tools/call", params: { name: "create_share", arguments: { id: artifactId, expires: "never" } } }, { clientId: "other", org: "acme" });
+  assert.equal(denied.result.isError, true);
+  const revoked = await call("revoke_share", { token }, 44);
+  assert.equal(revoked.result.structuredContent.revoked, true);
+  const { resolve } = await import("../lib/shares.js");
+  assert.equal(resolve(token), null);
 });
 
 test("list_feedback exposes anchor reliability while keeping ownership and resolution scoped", async () => {

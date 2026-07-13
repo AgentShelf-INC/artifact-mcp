@@ -29,6 +29,9 @@ multi-tenancy, collaboration, and no third-party lock-in.
   (which auto-tenant a signed-in viewer), and a **category** list — all edited in Settings.
 - **Cloudflare Access front door** — humans log in (SSO); the app verifies the Access **JWT** so
   the tenant boundary can't be spoofed. `/mcp` is Access-bypassed (agents use the API key).
+- **Public share links** — an org member or admin can make an unlisted, read-only link for one
+  artifact. Links are protected by an unguessable token and can expire or be revoked; they are
+  deliberately public to anyone who has the URL.
 - **Strict isolation** — each key is locked to its org; each viewer is scoped to their org by
   verified email domain. Cross-org requests 404. Admins see every org.
 
@@ -83,6 +86,9 @@ multi-tenancy, collaboration, and no third-party lock-in.
 | `delete_artifact(id)` | Delete an artifact (owner or admin) |
 | `list_revisions(id)` | List an artifact's retained version history (owner or admin) |
 | `restore_artifact(id, revision)` | Restore a past revision as a new revision (owner or admin) |
+| `create_share(id, expires)` | Create an unlisted public share link (owner or admin) |
+| `list_shares(id)` | List active public share links (owner or admin) |
+| `revoke_share(token)` | Revoke an active public share link (owner or admin) |
 | `artifact_stats(id)` | Views, unique viewers, and the named viewer list (owner or admin) |
 | `list_feedback(id?)` | List viewer feedback + anchors + thread structure (owner or admin; admin sees all) |
 | `resolve_feedback(feedback_id)` | Mark viewer feedback resolved (owner or admin) |
@@ -101,12 +107,16 @@ mutate an artifact or read another owner's data require the artifact owner or an
 Agent ──(MCP, API key)──▶ /mcp ──┐
                                  ├─▶ artifact-mcp (Node/Express) ─▶ SQLite + files on disk
 Human ──(Cloudflare Access)──▶ gallery / /:id / /raw/:id/… ──┘   served at https://domain/<id>
+Public ──(share token)────────▶ /s/:token[/…] ──────────────────┘
 ```
 
 Two access surfaces, deliberately split:
 - **Upload** (`/mcp`) — API-key auth, Access-bypassed (agents can't do interactive SSO).
 - **View** (`/`, `/:id`, `/raw/:id/…`, `/settings`) — behind Cloudflare Access; the app verifies
   the Access JWT and scopes content to the viewer's org.
+- **Share** (`/s/:token[/…]`) — only this path is public, and only when its unguessable token is
+  active. It serves the live artifact in a sandbox with `X-Robots-Tag: noindex`; no viewer shell,
+  feedback bridge, analytics, or mutation routes are exposed.
 
 ### Routes
 | Route | Role |
@@ -116,10 +126,12 @@ Two access surfaces, deliberately split:
 | `GET /:id` | viewer shell (chrome + sandboxed iframe) |
 | `GET /raw/:id` · `GET /raw/:id/*` | raw single-file / bundle serving (path-traversal guarded); `?anchor=1` injects the comment bridge, `?download` forces attachment |
 | `GET /raw/:id/rev/:n[/*]` | serve a past revision's body |
+| `GET /s/:token` · `GET /s/:token/*` | public read-only share delivery for a valid active token |
 | `GET /:id/history` · `POST /:id/restore` | version history + restore |
 | `POST /:id/react` | favorite / vote (per viewer) |
 | `POST /:id/feedback` · `DELETE /:id/feedback/:fid` · `POST /:id/feedback/:fid/resolve` | threaded viewer feedback (own-or-admin manage) |
 | `POST /:id/category` | set category (same-org member or admin) |
+| `POST /:id/share` · `GET /:id/shares` · `DELETE /:id/shares/:token` | create, list, or revoke public share links (same-org member or admin) |
 | `POST /:id/visibility` | hide / show (same-org member or admin) |
 | `POST /:id/move` | category or org move — **admin** (org move re-tenants) |
 | `DELETE /:id` | delete (admin or same-org viewer) |
@@ -132,7 +144,8 @@ Two access surfaces, deliberately split:
 registry) · `lib/feedback.js` (threaded feedback + anchors) · `lib/views.js` (analytics) ·
 `lib/webhooks.js` + `lib/notify.js` (Discord notifications) · `lib/reactions.js` (favorites/votes) ·
 `lib/keys.js` + `lib/auth.js` (hashed keys) · `lib/portal.js` (gallery + shell + anchor bridge) ·
-`lib/settings.js` (admin page) · `lib/artifact-http.js` (raw headers + bridge) ·
+`lib/settings.js` (admin page) · `lib/artifact-http.js` (raw headers + bridge) · `lib/shares.js`
+(public-link lifecycle) ·
 `lib/db.js` + `lib/migrations.js` (SQLite lifecycle).
 
 For domain language, invariants, module seams, and workflows, see [`CONTEXT.md`](CONTEXT.md).
@@ -171,8 +184,11 @@ curl -H "Authorization: Bearer $KEY" -H 'content-type: application/json' \
 
 1. **Tunnel** public hostname `artifact.your-domain` → `http://<host>:3480`.
 2. **Access app** #1 on path `/mcp` → policy **Bypass → Everyone** (agents auth by key).
-3. **Access app** #2 catch-all → **Allow** your viewer email domains + admin email.
-4. Copy the catch-all app's **AUD** → set `CF_ACCESS_AUD` + `CF_ACCESS_TEAM_DOMAIN`, rebuild
+3. **Access app** #2 on path `/s/*` → policy **Bypass → Everyone**. This is required for public
+   share links: the application validates the opaque share token itself. It cannot be configured
+   from application code.
+4. **Access app** #3 catch-all → **Allow** your viewer email domains + admin email.
+5. Copy the catch-all app's **AUD** → set `CF_ACCESS_AUD` + `CF_ACCESS_TEAM_DOMAIN`, rebuild
    → viewer identity is now JWT-verified.
 
 Onboard a viewer org: create it in **Settings** (name + email domain) and add that domain to the
@@ -184,7 +200,7 @@ Access allow-policy. Let an org **publish**: generate a key for it in Settings.
   **verifies the Access JWT**, so viewer identity (and org) can't be spoofed.
 - Every artifact is attributed to its uploading key; revoke a key to cut off a collaborator
   instantly. Org move re-tenants an artifact and all its child rows atomically.
-- **Sandboxed rendering** — every raw response carries a CSP sandbox without `allow-same-origin`
+- **Sandboxed rendering** — every raw and shared response carries a CSP sandbox without `allow-same-origin`
   (including `.svg`/`.xml` and downloads), so uploaded content runs in a null origin.
 - **Anchored-comment bridge** — the comment/position script is injected **only** into the
   `?anchor=1` representation (raw + downloads are byte-for-byte unchanged), is a fixed server
@@ -193,6 +209,9 @@ Access allow-policy. Let an org **publish**: generate a key for it in Settings.
 - **Webhooks** — URLs are validated to the Discord webhook host (no SSRF to arbitrary hosts),
   stored/returned masked, and delivered fire-and-forget with a timeout and no redirect following.
 - **View privacy** — named viewer lists reach only admins and the owning agent; never cross-tenant.
+- **Public shares** — a share is unlisted public, not private: anyone with its URL can view the
+  live artifact. A random URL-safe token, server-side expiry, and immediate revoke are its access
+  controls; invalid, expired, and revoked tokens all return the same 404.
 - Bundle paths are sanitized (no `..`, no absolute); size/file caps enforced; the Docker build
   context excludes deployment secrets, persistent data, and local planning files.
 - Not included: content scanning, rate limiting, or a physically separate raw-content origin.
@@ -205,8 +224,8 @@ Access allow-policy. Let an org **publish**: generate a key for it in Settings.
 - Per-key rate limits and quotas; artifact TTL/expiry; deleted-artifact tombstone
 - Optional separate artifact-delivery origin and content scanning
 
-External no-login share links are intentionally **out of scope** — access is gated by org / email
-domain by design.
+External no-login sharing is intentionally limited to explicit per-artifact links under `/s/*`;
+the gallery and all ordinary artifact routes remain Access-gated.
 
 ## License
 
