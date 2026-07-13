@@ -31,7 +31,9 @@ function dependencies(overrides = {}) {
       addDomain: () => ({}),
       removeDomain: () => true,
       addCategory: () => ({}),
-      removeCategory: () => true
+      removeCategory: () => true,
+      setColor: () => ({}),
+      colorMap: () => ({})
     },
     reactions: {
       get: () => ({ favorite: 0, vote: 0 }),

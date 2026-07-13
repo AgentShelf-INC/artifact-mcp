@@ -49,7 +49,9 @@ const app = createApp({
     addDomain: orgs.addDomain,
     removeDomain: orgs.removeDomain,
     addCategory: orgs.addCategory,
-    removeCategory: orgs.removeCategory
+    removeCategory: orgs.removeCategory,
+    setColor: orgs.setColor,
+    colorMap: orgs.colorMap
   },
   webhooks,
   notify,

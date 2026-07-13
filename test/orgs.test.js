@@ -75,3 +75,14 @@ test("adding a domain or category to an unknown org is rejected", () => {
   assert.throws(() => orgs.addDomain("ghost", "ghost.test"), /Unknown organization/);
   assert.throws(() => orgs.addCategory("ghost", "X"), /Unknown organization/);
 });
+
+test("org color: set hex, clear, reject invalid, and expose via colorMap", () => {
+  orgs.createOrg({ name: "hued" });
+  assert.deepEqual(orgs.setColor("hued", "#356B9F"), { name: "hued", color: "#356B9F" });
+  assert.equal(orgs.colorMap().hued, "#356B9F");
+  assert.equal(orgs.listOrgs().find((o) => o.name === "hued").color, "#356B9F");
+  assert.throws(() => orgs.setColor("hued", "blue"), /hex/);
+  assert.deepEqual(orgs.setColor("hued", ""), { name: "hued", color: null }); // clear -> derived
+  assert.equal(orgs.colorMap().hued, null);
+  assert.throws(() => orgs.setColor("ghost", "#000000"), /Unknown organization/);
+});

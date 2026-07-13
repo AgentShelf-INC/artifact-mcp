@@ -11,4 +11,9 @@ test("orgColor derives a stable, distinct color from any org name", () => {
   assert.notEqual(orgColor("acme"), orgColor("admin"));
   // Valid CSS color.
   assert.match(orgColor("acme"), /^hsl\(/);
+  // An explicitly stored hex wins; an invalid/empty color falls back to the derived hue.
+  assert.equal(orgColor("acme", "#356B9F"), "#356B9F");
+  assert.equal(orgColor("acme", "#abc"), "#abc");
+  assert.equal(orgColor("acme", "not-a-color"), orgColor("acme"));
+  assert.equal(orgColor("acme", ""), orgColor("acme"));
 });
