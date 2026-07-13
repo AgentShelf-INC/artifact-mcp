@@ -1,21 +1,33 @@
 # artifact-mcp
 
-> **Your agents make HTML. Host it on _your_ domain — not someone else's cloud.**
+> **The self-hosted, multi-tenant platform for your AI agents' HTML artifacts — your domain, your
+> data, your rules.**
 
 [![License: Apache 2.0](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
 [![CI](https://github.com/neilcorp2kx/artifact-mcp/actions/workflows/ci.yml/badge.svg)](https://github.com/neilcorp2kx/artifact-mcp/actions/workflows/ci.yml)
 ![MCP server](https://img.shields.io/badge/MCP-server-6E56CF.svg)
 
-A self-hostable **MCP server that lets authorized agents publish HTML artifacts** to your own
-domain. An agent calls a tool, gets back a URL, and the page is served at
-`https://your-domain/<id>` — with an org-scoped gallery of everything published, version history,
-viewer feedback, view analytics, and per-org key/notification management.
+Your agents already generate HTML — dashboards, reports, one-pagers, whole mini-sites.
+**artifact-mcp is where that output lives.** An agent calls an MCP tool, gets back a real URL on
+**your** domain, and the page is served from **your** infrastructure at `https://your-domain/<id>`.
+Around every artifact you get an org-scoped gallery, version history, viewer feedback, view
+analytics, public share links, and per-org notifications.
 
-Think "shareable Claude-style artifacts, hosted on infrastructure you control" — with real
-multi-tenancy, collaboration, and no third-party lock-in.
+Not a hosted primitive that publishes to someone else's cloud — **a platform you run**, with real
+multi-organization tenancy, for teams that want to own their work. One container, SQLite + files on
+disk, no third-party lock-in.
 
-> Point it at any domain you control. Set `PUBLIC_BASE_URL` and (for production) the
-> Cloudflare Access variables; org colors and tenants are configured at runtime, not in code.
+### Built for teams, not just a publish button
+
+- **Own the domain and the data.** Artifacts live at `https://your-domain/<id>`, in your SQLite, on
+  your disk — never a vendor's bucket. Point it at any domain you control; orgs and colors are
+  configured at runtime, not in code.
+- **Real multi-tenancy.** Many organizations, each isolated: per-org upload keys, viewers scoped to
+  their org by verified SSO identity, per-org categories, colors, and Discord notifications.
+- **A gallery, not a graveyard.** Everything published is browsable, searchable, versioned, and
+  commentable — an index your team actually uses, not a pile of orphan links.
+- **Agent-native _and_ human-native.** Agents publish over MCP; humans review, comment (pinned to
+  the exact spot on the page), and share — behind Cloudflare Access SSO.
 
 ## Screenshots
 
@@ -99,6 +111,32 @@ umbrella). Both light and dark themes ship; light shown here.*
 - **Crash-safe storage** — staging→rename lifecycle, commit-then-swap updates, and startup audit
   recovery reconcile the DB and files on disk after an interrupted operation.
 - **No database server** — SQLite (versioned migrations) + files on disk. One container.
+
+## How it compares
+
+There are good tools for *publishing a page* from an agent. artifact-mcp aims one level up — the
+**team platform** around those pages: many orgs, a shared gallery, history, analytics, and review,
+all on infrastructure you own.
+
+| | **artifact-mcp** | Hosted publish-MCP<br>(e.g. Stacktree) | Deploy-a-page MCP<br>(e.g. EdgeOne Pages) | Self-hosted chat UIs<br>(LibreChat / Open WebUI) |
+|---|:--:|:--:|:--:|:--:|
+| Agent publishes HTML over MCP | ✅ | ✅ | ✅ | ❌ *(renders inline only)* |
+| Runs on **your** infra + domain | ✅ | ⚠️ mostly hosted | ✅ | ✅ |
+| **Multi-organization tenancy** | ✅ | ❌ | ❌ | ❌ |
+| Org-scoped gallery + categories | ✅ | ❌ | ❌ | ⚠️ |
+| Version history + restore | ✅ | ⚠️ implicit | ❌ | ❌ |
+| Anchored viewer feedback | ✅ | ✅ | ❌ | ❌ |
+| View analytics | ✅ | ❌ | ❌ | ❌ |
+| Public share links (expiry + revoke) | ✅ | ✅ | ❌ | ❌ |
+| Per-org notifications | ✅ | ❌ | ❌ | ❌ |
+| Open source | ✅ | ❌ | ✅ | ✅ |
+
+If you just want one unguessable link to one page, a hosted primitive is simpler. If you want **a
+place your whole team's agent output lives — owned, tenanted, versioned, and reviewable** — that's
+this.
+
+<sub>Comparison based on each project's publicly documented features as of July 2026; verify against
+their current docs.</sub>
 
 ## MCP tools (`POST /mcp`, bearer key)
 
