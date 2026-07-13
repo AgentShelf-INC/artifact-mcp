@@ -141,6 +141,8 @@ test("administrators can open artifacts across organizations", async () => {
     const response = await fetch(`${baseUrl}/abc123`);
     assert.equal(response.status, 200);
     assert.equal(await response.text(), "shell");
+    // Identity-dependent HTML must not be cached (else a stale pre-auth page can be served).
+    assert.match(response.headers.get("cache-control") || "", /no-store/);
   });
 });
 
