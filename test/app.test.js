@@ -1,6 +1,38 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { createApp } from "../lib/app.js";
+
+const identityDataDir = mkdtempSync(join(tmpdir(), "artifact-mcp-identity-"));
+process.env.DATA_DIR = identityDataDir;
+test.after(() => rmSync(identityDataDir, { recursive: true, force: true }));
+
+let identityImportId = 0;
+async function withIdentityEnv(values, fn) {
+  const names = [
+    "CF_ACCESS_TEAM_DOMAIN",
+    "CF_ACCESS_AUD",
+    "TRUST_ACCESS_HEADERS",
+    "REQUIRE_ACCESS_JWT",
+    "ADMIN_EMAILS",
+    "ADMIN_EMAIL_DOMAINS",
+    "ORG_EMAIL_DOMAINS"
+  ];
+  const previous = new Map(names.map((name) => [name, process.env[name]]));
+  for (const name of names) delete process.env[name];
+  Object.assign(process.env, values);
+  try {
+    const url = new URL(`../lib/identity.js?test=${++identityImportId}`, import.meta.url);
+    return await fn(await import(url.href));
+  } finally {
+    for (const [name, value] of previous) {
+      if (value === undefined) delete process.env[name];
+      else process.env[name] = value;
+    }
+  }
+}
 
 function dependencies(overrides = {}) {
   const artifact = { id: "abc123", org: "acme", title: "Artifact", client_id: "publisher", is_bundle: 0 };
@@ -64,6 +96,95 @@ async function serve(app, fn) {
     await new Promise((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
   }
 }
+
+// Exercise a createApp route without opening a socket. Route middleware is unnecessary for
+// these cases because the request body is already decoded by the test harness.
+async function invokeRoute(app, method, path, { headers = {}, params = {}, body } = {}) {
+  const route = app._router.stack.find((layer) => layer.route?.path === path && layer.route.methods[method]);
+  assert.ok(route, `${method.toUpperCase()} ${path} route exists`);
+  const handler = route.route.stack.at(-1).handle;
+  const result = { status: 200, headers: {}, body: undefined };
+  const res = {
+    status(code) { result.status = code; return this; },
+    set(name, value) {
+      if (typeof name === "object") Object.assign(result.headers, name);
+      else result.headers[String(name).toLowerCase()] = value;
+      return this;
+    },
+    send(value) { result.body = value; return this; },
+    json(value) { result.body = value; return this; },
+    end() { return this; },
+    redirect(code, location) { result.status = code; result.headers.location = location; return this; }
+  };
+  await handler({ headers, params, body }, res);
+  return result;
+}
+
+test("Access identity fails closed when JWT and explicit header trust are both off", async () => {
+  await withIdentityEnv({ ADMIN_EMAILS: "admin@example.test" }, async (identity) => {
+    assert.equal(identity.ACCESS_IDENTITY_MODE, "disabled");
+    const headers = { "cf-access-authenticated-user-email": "admin@example.test" };
+    assert.deepEqual(await identity.resolveViewer({ headers }), { email: null, org: null, isAdmin: false });
+
+    const app = createApp(dependencies({ resolveViewer: identity.resolveViewer }));
+    const gallery = await invokeRoute(app, "get", "/", { headers });
+    assert.equal(gallery.status, 403);
+    assert.equal(gallery.body, "not signed in");
+    assert.equal((await invokeRoute(app, "get", "/settings", { headers })).status, 403);
+  });
+});
+
+test("TRUST_ACCESS_HEADERS=1 explicitly restores local-development header identity", async () => {
+  await withIdentityEnv(
+    { TRUST_ACCESS_HEADERS: "1", ADMIN_EMAILS: "admin@example.test" },
+    async (identity) => {
+      assert.equal(identity.ACCESS_IDENTITY_MODE, "header-trust");
+      const headers = { "cf-access-authenticated-user-email": "admin@example.test" };
+      assert.deepEqual(
+        await identity.resolveViewer({ headers }),
+        { email: "admin@example.test", org: "admin", isAdmin: true }
+      );
+      const app = createApp(dependencies({ resolveViewer: identity.resolveViewer }));
+      assert.equal((await invokeRoute(app, "get", "/", { headers })).status, 200);
+      assert.equal((await invokeRoute(app, "get", "/settings", { headers })).status, 200);
+    }
+  );
+});
+
+test("MCP keys and share tokens remain identity-independent in every Access mode", async () => {
+  const modes = [
+    [{}, "disabled"],
+    [{ TRUST_ACCESS_HEADERS: "1" }, "header-trust"],
+    [{ CF_ACCESS_TEAM_DOMAIN: "team.cloudflareaccess.com", CF_ACCESS_AUD: "aud" }, "jwt"]
+  ];
+  for (const [env, expectedMode] of modes) {
+    await withIdentityEnv(env, async (identity) => {
+      assert.equal(identity.ACCESS_IDENTITY_MODE, expectedMode);
+      const app = createApp(dependencies({
+        checkPublisherKey: () => ({ ok: true, clientId: "publisher", org: "acme", label: "Agent" }),
+        handleMcp: async () => ({ jsonrpc: "2.0", id: 1, result: { ok: true } }),
+        shares: { resolve: () => ({ artifact_id: "abc123", org: "acme" }) },
+        resolveViewer: async () => { throw new Error("identity-independent route resolved viewer"); }
+      }));
+      const mcp = await invokeRoute(app, "post", "/mcp", {
+        headers: { authorization: "Bearer secret" },
+        body: { jsonrpc: "2.0", id: 1, method: "ping" }
+      });
+      assert.equal(mcp.status, 200);
+      assert.deepEqual(mcp.body, { jsonrpc: "2.0", id: 1, result: { ok: true } });
+      const share = await invokeRoute(app, "get", "/s/:token", { params: { token: "valid" } });
+      assert.equal(share.status, 200);
+      assert.equal(share.body, "<h1>Artifact</h1>");
+    });
+  }
+});
+
+test("REQUIRE_ACCESS_JWT=1 rejects startup readiness without complete JWT configuration", async () => {
+  await withIdentityEnv({ REQUIRE_ACCESS_JWT: "1" }, async (identity) => {
+    assert.equal(identity.ACCESS_IDENTITY_MODE, "disabled");
+    assert.throws(() => identity.assertReady(), /REQUIRE_ACCESS_JWT=1.*CF_ACCESS_TEAM_DOMAIN.*CF_ACCESS_AUD/);
+  });
+});
 
 test("cross-organization artifact reads are concealed as not found", async () => {
   await serve(createApp(dependencies()), async (baseUrl) => {

@@ -4,7 +4,7 @@ services:
     container_name: artifact-mcp
     restart: unless-stopped
     ports:
-      - "3480:3480"
+      - "${HOST_BIND:-127.0.0.1}:3480:3480"
     env_file:
       - .env
     environment:
@@ -22,3 +22,15 @@ services:
       start_period: 20s
     labels:
       - "autoheal=true"
+
+  # Uncomment for tunnel-only ingress; then remove the app's `ports:` publish entirely.
+  # Configure the tunnel's origin service as http://artifact-mcp:3480.
+  # cloudflared:
+  #   image: cloudflare/cloudflared
+  #   container_name: artifact-mcp-cloudflared
+  #   restart: unless-stopped
+  #   command: tunnel run
+  #   environment:
+  #     - TUNNEL_TOKEN=${TUNNEL_TOKEN}
+  #   depends_on:
+  #     - artifact-mcp

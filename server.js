@@ -5,7 +5,7 @@ import db, { ARTIFACT_DIR, seedKeysFromEnv } from "./lib/db.js";
 import { sha256Hex, checkKey } from "./lib/auth.js";
 import { handleMcp } from "./lib/mcp.js";
 import * as artifactStore from "./lib/store.js";
-import { resolveViewer, JWT_VERIFICATION_ON } from "./lib/identity.js";
+import { ACCESS_IDENTITY_MODE, assertReady, resolveViewer } from "./lib/identity.js";
 import { renderGallery, renderArtifactShell, notFoundPage, notSignedInPage } from "./lib/portal.js";
 import { renderSettings } from "./lib/settings.js";
 import { listKeys, createKey, revokeKey } from "./lib/keys.js";
@@ -20,8 +20,21 @@ import * as notify from "./lib/notify.js";
 const PORT = Number(process.env.PORT || 3480);
 const PUBLIC_BASE = process.env.PUBLIC_BASE_URL || "http://localhost:3480";
 
+assertReady();
 console.log(`[artifact-mcp] seeded ${seedKeysFromEnv(sha256Hex)} key(s) from env`);
-console.log(`[artifact-mcp] Access JWT verification: ${JWT_VERIFICATION_ON ? "ON" : "OFF (trusting header — set CF_ACCESS_TEAM_DOMAIN+CF_ACCESS_AUD for production)"}`);
+if (ACCESS_IDENTITY_MODE === "jwt") {
+  console.log("[artifact-mcp] Access identity: JWT-verified");
+} else if (ACCESS_IDENTITY_MODE === "header-trust") {
+  console.warn(
+    "[artifact-mcp] WARNING: Access identity: HEADER-TRUST (unverified header; " +
+    "TRUST_ACCESS_HEADERS=1 is unsafe outside loopback)"
+  );
+} else {
+  console.log(
+    "[artifact-mcp] Access identity: DISABLED (fail closed) — set CF_ACCESS_* for production " +
+    "or TRUST_ACCESS_HEADERS=1 for local dev"
+  );
+}
 const storageReport = artifactStore.auditStorage({ cleanTransient: true });
 if (storageReport.recoveredPaths.length) {
   console.log(`[artifact-mcp] recovered ${storageReport.recoveredPaths.length} interrupted artifact operation(s)`);

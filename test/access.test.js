@@ -13,7 +13,7 @@ test("artifact access expresses tenant and concealment policy consistently", () 
 });
 
 test("admin access distinguishes unsigned and non-admin viewers", () => {
-  assert.deepEqual(adminAccess({ email: null, isAdmin: false }), { ok: false, status: 401, error: "Not signed in" });
+  assert.deepEqual(adminAccess({ email: null, isAdmin: false }), { ok: false, status: 403, error: "Not signed in" });
   assert.deepEqual(adminAccess({ email: "member@example.com", isAdmin: false }), { ok: false, status: 403, error: "Admins only" });
   assert.deepEqual(adminAccess({ email: "admin@example.com", isAdmin: true }), { ok: true });
 });

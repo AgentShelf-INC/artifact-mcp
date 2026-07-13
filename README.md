@@ -181,6 +181,9 @@ For domain language, invariants, module seams, and workflows, see [`CONTEXT.md`]
 | `ORG_EMAIL_DOMAINS` | Optional `domain:org` seeds — the registry (managed in Settings) is authoritative; default: the email domain **is** the org |
 | `ADMIN_EMAILS` / `ADMIN_EMAIL_DOMAINS` | Who sees every org |
 | `CF_ACCESS_TEAM_DOMAIN` + `CF_ACCESS_AUD` | Enable Access JWT verification (production) |
+| `TRUST_ACCESS_HEADERS` | Set to `1` only for loopback local development; trusts an unverified, spoofable identity header |
+| `REQUIRE_ACCESS_JWT` | Set to `1` to refuse startup unless both Access JWT variables are configured |
+| `HOST_BIND` | Host publish address; defaults to loopback-only `127.0.0.1` |
 | `MAX_ARTIFACT_BYTES` (2MB) · `MAX_BUNDLE_BYTES` (8MB) · `MAX_BUNDLE_FILES` (100) | Content caps |
 | `MAX_HISTORY` (20) | Retained revisions per artifact |
 | `FEEDBACK_MAX_BODY` (4000) | Max feedback length |
@@ -205,7 +208,7 @@ curl -H "Authorization: Bearer $KEY" -H 'content-type: application/json' \
 
 ## Cloudflare setup (production)
 
-1. **Tunnel** public hostname `artifact.your-domain` → `http://<host>:3480`.
+1. **Tunnel** public hostname `artifact.your-domain` → the artifact-mcp origin.
 2. **Access app** #1 on path `/mcp` → policy **Bypass → Everyone** (agents auth by key).
 3. **Access app** #2 on path `/s/*` → policy **Bypass → Everyone**. This is required for public
    share links: the application validates the opaque share token itself. It cannot be configured
@@ -214,6 +217,15 @@ curl -H "Authorization: Bearer $KEY" -H 'content-type: application/json' \
 5. Copy the catch-all app's **AUD** → set `CF_ACCESS_AUD` + `CF_ACCESS_TEAM_DOMAIN`, rebuild
    → viewer identity is now JWT-verified.
 
+### Network exposure
+
+Cloudflare Access guards the tunnel hostname, not an origin port reached directly. Do not publish
+the origin on the LAN. The shipped Compose file defaults to the loopback-only
+`127.0.0.1:3480:3480` mapping (controlled explicitly with `HOST_BIND`). The preferred fully-private
+setup is the commented same-project `cloudflared` service: configure its tunnel origin as
+`http://artifact-mcp:3480`, uncomment it, and remove the app's `ports:` section entirely. The
+tunnel then reaches the app over Compose's default network without any host port.
+
 Onboard a viewer org: create it in **Settings** (name + email domain) and add that domain to the
 Access allow-policy. Let an org **publish**: generate a key for it in Settings.
 
@@ -221,6 +233,10 @@ Access allow-policy. Let an org **publish**: generate a key for it in Settings.
 
 - Cloudflare strips client-supplied `Cf-Access-*` headers at the edge; the app additionally
   **verifies the Access JWT**, so viewer identity (and org) can't be spoofed.
+- Viewer identity fails closed by default: without both `CF_ACCESS_*` JWT settings, no header can
+  authenticate a viewer. `TRUST_ACCESS_HEADERS=1` restores unverified header trust only as an
+  explicit loopback-development convenience and is unsafe on a reachable origin. Production must
+  configure both JWT settings and can enforce them at startup with `REQUIRE_ACCESS_JWT=1`.
 - Every artifact is attributed to its uploading key; revoke a key to cut off a collaborator
   instantly. Org move re-tenants an artifact and all its child rows atomically.
 - **Sandboxed rendering** — every raw and shared response carries a CSP sandbox without `allow-same-origin`
