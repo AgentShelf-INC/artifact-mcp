@@ -193,6 +193,10 @@ See `.env.example`.
 
 ## Quick start
 
+New here? [`GETTING_STARTED.md`](GETTING_STARTED.md) is a phase-by-phase setup — local run first,
+then the full Cloudflare Tunnel + Access production deploy — with a verification check after each
+step (and written so an AI agent can drive it).
+
 ```bash
 cp .env.example .env      # set ARTIFACT_API_KEYS and (prod) CF_ACCESS_* vars
 docker compose up -d --build
