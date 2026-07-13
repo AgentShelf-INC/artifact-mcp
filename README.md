@@ -8,8 +8,8 @@ viewer feedback, view analytics, and per-org key/notification management.
 Think "shareable Claude-style artifacts, hosted on infrastructure you control" — with real
 multi-tenancy, collaboration, and no third-party lock-in.
 
-> Live deployment: **artifact.neilblackman.dev** (VM310 Docker, behind Cloudflare Tunnel + Access).
-> Sibling of the **Context Hub** (shared LLM memory) — different service, different purpose.
+> Point it at any domain you control. Set `PUBLIC_BASE_URL` and (for production) the
+> Cloudflare Access variables; org colors and tenants are configured at runtime, not in code.
 
 ## Features
 

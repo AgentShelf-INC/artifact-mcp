@@ -99,5 +99,5 @@ The main real seam is `createApp()`: production adapters are assembled in `serve
 - `npm test` runs unit, persistence integration, MCP, and HTTP integration tests.
 - Every changed JavaScript file must pass `node --check`.
 - Build with `docker compose build`; `.dockerignore` must prevent `.env` and `data/` from entering the image.
-- Deployment is an owner-run operation on VM310; repository changes should not deploy automatically.
+- Deployment is an owner-run operation; repository changes should not deploy automatically.
 

@@ -2,7 +2,7 @@
   "name": "artifact-mcp",
   "version": "1.0.0",
   "type": "module",
-  "description": "Hosted MCP server: authorized agents publish HTML artifacts served at artifact.neilblackman.dev/<id>",
+  "description": "Self-hostable MCP server for publishing agent-made HTML artifacts to your own domain, with multi-org tenancy",
   "scripts": {
     "start": "node server.js",
     "test": "node --test --test-concurrency=1"

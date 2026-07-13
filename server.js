@@ -12,11 +12,13 @@ import { listKeys, createKey, revokeKey } from "./lib/keys.js";
 import * as orgs from "./lib/orgs.js";
 import { getReaction, setReaction, reactionsFor, sentimentMap } from "./lib/reactions.js";
 import * as views from "./lib/views.js";
+import * as shares from "./lib/shares.js";
 import { addFeedback, listForArtifact as feedbackForArtifact, getFeedback, deleteFeedback, resolveByViewer } from "./lib/feedback.js";
 import * as webhooks from "./lib/webhooks.js";
 import * as notify from "./lib/notify.js";
 
 const PORT = Number(process.env.PORT || 3480);
+const PUBLIC_BASE = process.env.PUBLIC_BASE_URL || "http://localhost:3480";
 
 console.log(`[artifact-mcp] seeded ${seedKeysFromEnv(sha256Hex)} key(s) from env`);
 console.log(`[artifact-mcp] Access JWT verification: ${JWT_VERIFICATION_ON ? "ON" : "OFF (trusting header — set CF_ACCESS_TEAM_DOMAIN+CF_ACCESS_AUD for production)"}`);
@@ -36,6 +38,7 @@ const app = createApp({
   handleMcp,
   resolveViewer,
   artifacts: artifactStore,
+  shares,
   keys: { list: listKeys, create: createKey, revoke: revokeKey },
   orgs: {
     list: orgs.listOrgs,
@@ -54,6 +57,7 @@ const app = createApp({
   views,
   feedback: { add: addFeedback, listForArtifact: feedbackForArtifact, getFeedback, deleteFeedback, resolveByViewer },
   pages: { gallery: renderGallery, shell: renderArtifactShell, notFound: notFoundPage, settings: renderSettings },
+  publicBase: PUBLIC_BASE,
   healthCheck() {
     db.prepare("SELECT 1").get();
     accessSync(ARTIFACT_DIR, constants.R_OK | constants.W_OK);

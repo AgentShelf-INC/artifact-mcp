@@ -10,7 +10,8 @@ services:
     environment:
       - PORT=3480
       - DATA_DIR=/data
-      - PUBLIC_BASE_URL=https://artifact.neilblackman.dev
+      # Set PUBLIC_BASE_URL in .env to your public hostname (used to build artifact/share links).
+      - PUBLIC_BASE_URL=${PUBLIC_BASE_URL:-http://localhost:3480}
     volumes:
       - ./data:/data
     healthcheck:
