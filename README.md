@@ -14,21 +14,21 @@ multi-tenancy, collaboration, and no third-party lock-in.
 ## Screenshots
 
 *Screenshots are from a demo instance seeded with fictional orgs (acme / globex / initech /
-umbrella). Both light and dark themes ship; dark shown here.*
+umbrella). Both light and dark themes ship; light shown here.*
 
 | Org-scoped gallery | Viewer shell + feedback threads |
 |---|---|
-| [![gallery](docs/screenshots/01-gallery-dark.png)](docs/screenshots/01-gallery-dark.png) | [![feedback](docs/screenshots/05-feedback-dark.png)](docs/screenshots/05-feedback-dark.png) |
+| [![gallery](docs/screenshots/01-gallery-light.png)](docs/screenshots/01-gallery-light.png) | [![feedback](docs/screenshots/05-feedback-light.png)](docs/screenshots/05-feedback-light.png) |
 | Per-org sections and categories, live artifact previews, colored org filters. | Sandboxed artifact with anchored, threaded viewer feedback (resolve / delete / reply). |
 
 | Version history | Public share link |
 |---|---|
-| [![history](docs/screenshots/06-history-dark.png)](docs/screenshots/06-history-dark.png) | [![share](docs/screenshots/07-share-panel-dark.png)](docs/screenshots/07-share-panel-dark.png) |
+| [![history](docs/screenshots/06-history-light.png)](docs/screenshots/06-history-light.png) | [![share](docs/screenshots/07-share-panel-light.png)](docs/screenshots/07-share-panel-light.png) |
 | Browse and restore any retained revision. | Create an unlisted, expiring, revocable `/s/:token` link. |
 
 | Admin settings | Branded sign-in |
 |---|---|
-| [![settings](docs/screenshots/03-settings-dark.png)](docs/screenshots/03-settings-dark.png) | [![signin](docs/screenshots/02-signin-dark.png)](docs/screenshots/02-signin-dark.png) |
+| [![settings](docs/screenshots/03-settings-light.png)](docs/screenshots/03-settings-light.png) | [![signin](docs/screenshots/02-signin-light.png)](docs/screenshots/02-signin-light.png) |
 | Manage orgs, domains, categories, per-org color, webhooks, and upload keys. | The Access-gated front door before SSO. |
 
 ## Features
