@@ -46,6 +46,7 @@ function dependencies(overrides = {}) {
       gallery: () => "gallery",
       shell: () => "shell",
       notFound: () => "not found",
+      notSignedIn: () => "not signed in",
       settings: () => "settings"
     },
     logger: { info() {}, error() {} },

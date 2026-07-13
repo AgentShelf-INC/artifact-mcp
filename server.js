@@ -6,7 +6,7 @@ import { sha256Hex, checkKey } from "./lib/auth.js";
 import { handleMcp } from "./lib/mcp.js";
 import * as artifactStore from "./lib/store.js";
 import { resolveViewer, JWT_VERIFICATION_ON } from "./lib/identity.js";
-import { renderGallery, renderArtifactShell, notFoundPage } from "./lib/portal.js";
+import { renderGallery, renderArtifactShell, notFoundPage, notSignedInPage } from "./lib/portal.js";
 import { renderSettings } from "./lib/settings.js";
 import { listKeys, createKey, revokeKey } from "./lib/keys.js";
 import * as orgs from "./lib/orgs.js";
@@ -58,7 +58,7 @@ const app = createApp({
   reactions: { get: getReaction, set: setReaction, forViewer: reactionsFor, sentiment: sentimentMap },
   views,
   feedback: { add: addFeedback, listForArtifact: feedbackForArtifact, getFeedback, deleteFeedback, resolveByViewer },
-  pages: { gallery: renderGallery, shell: renderArtifactShell, notFound: notFoundPage, settings: renderSettings },
+  pages: { gallery: renderGallery, shell: renderArtifactShell, notFound: notFoundPage, notSignedIn: notSignedInPage, settings: renderSettings },
   publicBase: PUBLIC_BASE,
   healthCheck() {
     db.prepare("SELECT 1").get();
