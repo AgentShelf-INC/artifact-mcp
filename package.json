@@ -3,6 +3,25 @@
   "version": "1.3.0",
   "type": "module",
   "description": "Self-hostable MCP server for publishing agent-made HTML artifacts to your own domain, with multi-org tenancy",
+  "license": "Apache-2.0",
+  "author": "Neil Blackman",
+  "homepage": "https://github.com/neilcorp2kx/artifact-mcp#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/neilcorp2kx/artifact-mcp.git"
+  },
+  "bugs": {
+    "url": "https://github.com/neilcorp2kx/artifact-mcp/issues"
+  },
+  "keywords": [
+    "mcp",
+    "model-context-protocol",
+    "claude",
+    "artifacts",
+    "self-hosted",
+    "multi-tenant",
+    "cloudflare-access"
+  ],
   "scripts": {
     "start": "node server.js",
     "test": "node --test --test-concurrency=1"

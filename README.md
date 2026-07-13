@@ -1,5 +1,11 @@
 # artifact-mcp
 
+> **Your agents make HTML. Host it on _your_ domain — not someone else's cloud.**
+
+[![License: Apache 2.0](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
+[![CI](https://github.com/neilcorp2kx/artifact-mcp/actions/workflows/ci.yml/badge.svg)](https://github.com/neilcorp2kx/artifact-mcp/actions/workflows/ci.yml)
+![MCP server](https://img.shields.io/badge/MCP-server-6E56CF.svg)
+
 A self-hostable **MCP server that lets authorized agents publish HTML artifacts** to your own
 domain. An agent calls a tool, gets back a URL, and the page is served at
 `https://your-domain/<id>` — with an org-scoped gallery of everything published, version history,
@@ -272,4 +278,5 @@ the gallery and all ordinary artifact routes remain Access-gated.
 
 ## License
 
-MIT — see [`LICENSE`](LICENSE).
+Apache License 2.0 — see [`LICENSE`](LICENSE) and [`NOTICE`](NOTICE). Contributions are accepted
+under the same license; see [`CONTRIBUTING.md`](CONTRIBUTING.md).
