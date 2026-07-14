@@ -4,7 +4,7 @@
 > data, your rules.**
 
 [![License: Apache 2.0](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
-[![CI](https://github.com/neilcorp2kx/artifact-mcp/actions/workflows/ci.yml/badge.svg)](https://github.com/neilcorp2kx/artifact-mcp/actions/workflows/ci.yml)
+[![CI](https://github.com/AgentShelf-INC/artifact-mcp/actions/workflows/ci.yml/badge.svg)](https://github.com/AgentShelf-INC/artifact-mcp/actions/workflows/ci.yml)
 ![MCP server](https://img.shields.io/badge/MCP-server-6E56CF.svg)
 
 Your agents already generate HTML — dashboards, reports, one-pagers, whole mini-sites.

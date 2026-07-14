@@ -5,13 +5,13 @@
   "description": "Self-hostable MCP server for publishing agent-made HTML artifacts to your own domain, with multi-org tenancy",
   "license": "Apache-2.0",
   "author": "Neil Blackman",
-  "homepage": "https://github.com/neilcorp2kx/artifact-mcp#readme",
+  "homepage": "https://github.com/AgentShelf-INC/artifact-mcp#readme",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/neilcorp2kx/artifact-mcp.git"
+    "url": "git+https://github.com/AgentShelf-INC/artifact-mcp.git"
   },
   "bugs": {
-    "url": "https://github.com/neilcorp2kx/artifact-mcp/issues"
+    "url": "https://github.com/AgentShelf-INC/artifact-mcp/issues"
   },
   "keywords": [
     "mcp",
