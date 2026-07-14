@@ -46,6 +46,7 @@ Open `.env`. The only value you must set to boot is a bootstrap publishing key.
 | Var | Needed | Notes |
 |---|---|---|
 | `ARTIFACT_API_KEYS` | **yes** | `clientId:org:secret` (comma-separated for several). The DB is authoritative after first boot; this just seeds the first key. Use a long random secret. |
+| `WEBHOOK_ENC_KEY` | recommended | A 32-byte base64 key that encrypts Discord webhook URLs in SQLite with AES-256-GCM. If omitted, webhooks remain zero-config but are stored in plaintext and startup warns loudly. |
 | `PUBLIC_BASE_URL` | prod | Your real `https://artifact.your-domain`. Defaults to `http://localhost:3480`. Used to build share URLs. |
 | `ADMIN_EMAILS` | prod | Comma-separated emails that see every org (the admin gallery). |
 | `CF_ACCESS_TEAM_DOMAIN` + `CF_ACCESS_AUD` | prod | Turns on Access JWT verification. Set both in Phase 4. |
@@ -59,6 +60,18 @@ Example minimal bootstrap key:
 ```
 ARTIFACT_API_KEYS=agent1:acme:REPLACE_WITH_LONG_RANDOM_SECRET
 ```
+
+If you will use Discord notifications, generate the deployment encryption key once and add the
+printed value to `.env`:
+
+```bash
+openssl rand -base64 32
+# WEBHOOK_ENC_KEY=<paste the generated value>
+```
+
+Keep this key in the same protected secret store as the deployment and backup credentials. On the
+first boot with a key, any existing plaintext webhook rows are encrypted in place. Losing the key
+means existing encrypted webhook URLs cannot be delivered or recovered by artifact-mcp.
 
 **Check:** `ARTIFACT_API_KEYS` is set to a value you control.
 
@@ -164,7 +177,8 @@ Once you can sign in as admin at `https://artifact.your-domain/settings`:
 - **Let an org publish:** Settings → generate an upload key for that org. The secret is shown once —
   hand it to the agent/integration. Revoke anytime without a redeploy.
 - **Notifications (optional):** Settings → add a per-org Discord webhook and pick which events it
-  receives.
+  receives. The UI and HTTP responses always show a masked URL. With `WEBHOOK_ENC_KEY` configured,
+  the full URL is encrypted at rest; without it, the documented plaintext fallback applies.
 
 **Check:** a freshly generated key can publish; the artifact appears in that org's gallery section.
 

@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import Database from "better-sqlite3";
 import { LATEST_SCHEMA_VERSION } from "../lib/migrations.js";
+import { decrypt } from "../lib/crypto.js";
 
 const ALL_VERSIONS = Array.from({ length: LATEST_SCHEMA_VERSION }, (_, i) => i + 1);
 
@@ -91,6 +92,33 @@ test("legacy databases upgrade without losing valid keys, artifacts, or reaction
     assert.equal(runtime.db.prepare("SELECT COUNT(*) FROM reactions").pluck().get(), 0);
   } finally {
     runtime.db.close();
+    rmSync(dataDir, { recursive: true, force: true });
+  }
+});
+
+test("existing plaintext webhook rows are encrypted in place when a key is configured", () => {
+  const dataDir = mkdtempSync(path.join(tmpdir(), "artifact-db-webhook-encryption-"));
+  const previousKey = process.env.WEBHOOK_ENC_KEY;
+  delete process.env.WEBHOOK_ENC_KEY;
+  const first = openDatabase({ dataDir });
+  const secretUrl = "https://discord.com/api/webhooks/123/existing-plaintext-token";
+  first.db.prepare("INSERT INTO orgs (name) VALUES (?)").run("migration-test");
+  first.db.prepare("INSERT INTO org_webhooks (id, org, url) VALUES (?, ?, ?)")
+    .run("legacy-webhook", "migration-test", secretUrl);
+  first.db.close();
+
+  const key = Buffer.alloc(32, 7).toString("base64");
+  process.env.WEBHOOK_ENC_KEY = key;
+  const second = openDatabase({ dataDir });
+  try {
+    const stored = second.db.prepare("SELECT * FROM org_webhooks WHERE id = ?").get("legacy-webhook");
+    assert.doesNotMatch(JSON.stringify(stored), /existing-plaintext-token/);
+    assert.match(stored.url, /^https:\/\/discord\.com\/…oken$/);
+    assert.equal(decrypt(stored, key), secretUrl);
+  } finally {
+    second.db.close();
+    if (previousKey === undefined) delete process.env.WEBHOOK_ENC_KEY;
+    else process.env.WEBHOOK_ENC_KEY = previousKey;
     rmSync(dataDir, { recursive: true, force: true });
   }
 });

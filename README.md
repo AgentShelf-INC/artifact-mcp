@@ -102,8 +102,9 @@ umbrella). Both light and dark themes ship; light shown here.*
 - **Per-org Discord webhooks** — register one or more webhooks per org, each subscribed to any of
   six events (`published`, `updated`, `restored`, `deleted`, `feedback`, `resolved`). Route
   publishes to `#artifacts` and feedback to `#feedback`, etc. URLs are validated to the Discord
-  host, masked in the UI and API responses (the URL is stored as-is at rest — see the Security
-  model), and delivery is fire-and-forget (never blocks a request). Test button.
+  host, masked in every UI/API response, and encrypted at rest with `WEBHOOK_ENC_KEY`. The
+  documented no-key mode preserves zero-config with a loud plaintext-storage warning. Delivery is
+  fire-and-forget (never blocks a request). Test button.
 
 ### Operate
 - **Settings (admin)** — manage orgs / domains / categories / webhooks, and generate/revoke
@@ -223,6 +224,7 @@ For domain language, invariants, module seams, and workflows, see [`CONTEXT.md`]
 | Var | Purpose |
 |---|---|
 | `ARTIFACT_API_KEYS` | Bootstrap keys, `clientId:org:secret` comma-separated (DB is authoritative after first boot) |
+| `WEBHOOK_ENC_KEY` | Optional 32-byte base64 AES-256-GCM key for Discord webhook URLs; unset preserves plaintext fallback with a startup warning |
 | `ORG_EMAIL_DOMAINS` | Optional `domain:org` seeds — the registry (managed in Settings) is authoritative; default: the email domain **is** the org |
 | `ADMIN_EMAILS` / `ADMIN_EMAIL_DOMAINS` | Who sees every org |
 | `CF_ACCESS_TEAM_DOMAIN` + `CF_ACCESS_AUD` | Enable Access JWT verification (production) |
@@ -235,6 +237,24 @@ For domain language, invariants, module seams, and workflows, see [`CONTEXT.md`]
 | `MCP_JSON_LIMIT` | Optional JSON-envelope override; defaults above the configured bundle cap |
 
 See `.env.example`.
+
+Generate `WEBHOOK_ENC_KEY` once with `openssl rand -base64 32`, store it outside the repository,
+and retain it with encrypted backups. Existing plaintext webhook rows are encrypted in place on
+the first startup with a key; encrypted and plaintext rows can coexist during rollout.
+
+### Rotating the webhook encryption key
+
+Encrypted rows cannot be opened with a replacement key, so do not simply overwrite
+`WEBHOOK_ENC_KEY`. The supported manual rotation is:
+
+1. While the old key is active, inventory each webhook's events/label and copy its full URL from
+   Discord's integration settings (artifact-mcp deliberately shows only a mask).
+2. Delete those webhook registrations in artifact-mcp Settings, stop the app, and back up the data
+   volume plus the old key.
+3. Generate and install the new key, restart, then recreate the webhooks. New rows are encrypted
+   with the new key. Keep the old key as long as any backup containing old encrypted rows is kept.
+
+This procedure has a brief notification outage but never writes decrypted URLs back to SQLite.
 
 ## Quick start
 
@@ -295,8 +315,10 @@ Access allow-policy. Let an org **publish**: generate a key for it in Settings.
   constant, and the shell parent **never reads the iframe DOM**: all anchor data arrives via
   `postMessage`, validated by frame identity and a type allowlist, and treated as untrusted.
 - **Webhooks** — URLs are validated to the Discord webhook host (no SSRF to arbitrary hosts),
-  masked in responses but stored as-is at rest (restrict DB/volume access or encrypt accordingly),
-  and delivered fire-and-forget with a timeout and no redirect following.
+  masked in all responses, and encrypted at rest with AES-256-GCM when `WEBHOOK_ENC_KEY` is set.
+  Without it, the service remains zero-config and stores URLs in plaintext after a prominent
+  one-time startup warning. URLs are decrypted only for delivery, which is fire-and-forget with a
+  timeout and no redirect following.
 - **View privacy** — named viewer lists reach only admins and the owning agent; never cross-tenant.
 - **Public shares** — a share is unlisted public, not private: anyone with its URL can view the
   live artifact. A random URL-safe token, server-side expiry, and immediate revoke are its access

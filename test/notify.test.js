@@ -3,9 +3,11 @@ import assert from "node:assert/strict";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
+import { randomBytes } from "node:crypto";
 
 const dir = mkdtempSync(path.join(tmpdir(), "artifact-notify-"));
 process.env.DATA_DIR = dir;
+process.env.WEBHOOK_ENC_KEY = randomBytes(32).toString("base64");
 const { default: db } = await import("../lib/db.js");
 const orgs = await import("../lib/orgs.js");
 const webhooks = await import("../lib/webhooks.js");
@@ -14,6 +16,7 @@ const notify = await import("../lib/notify.js");
 after(() => {
   db.close();
   rmSync(dir, { recursive: true, force: true });
+  delete process.env.WEBHOOK_ENC_KEY;
 });
 
 function tick() {
@@ -54,4 +57,20 @@ test("emit only posts to matching webhook events and never throws on delivery fa
     fetchImpl: async () => { throw new Error("network down"); }
   }));
   await tick();
+});
+
+test("encrypted webhook delivery targets the decrypted Discord endpoint", async () => {
+  orgs.createOrg({ name: "encrypted-delivery" });
+  const secretUrl = "https://discord.com/api/webhooks/99/encrypted-delivery-token";
+  const created = webhooks.create({ org: "encrypted-delivery", url: secretUrl, events: ["published"] });
+  const stored = db.prepare("SELECT * FROM org_webhooks WHERE id = ?").get(created.id);
+  const calls = [];
+
+  notify.emit("published", "encrypted-delivery", { title: "Encrypted" }, {
+    fetchImpl: async (url) => { calls.push(url); return { ok: true }; }
+  });
+  await tick();
+
+  assert.doesNotMatch(JSON.stringify(stored), /encrypted-delivery-token/);
+  assert.deepEqual(calls, [secretUrl]);
 });
