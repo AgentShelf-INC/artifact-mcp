@@ -1,5 +1,6 @@
 import test, { after } from "node:test";
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import { existsSync, mkdtempSync, readdirSync, rmSync } from "node:fs";
 import * as fs from "node:fs";
 import { tmpdir } from "node:os";
@@ -9,6 +10,14 @@ const importDataDir = mkdtempSync(path.join(tmpdir(), "artifact-store-import-"))
 process.env.DATA_DIR = importDataDir;
 const { default: defaultDb, openDatabase } = await import("../lib/db.js");
 const { createArtifactStore } = await import("../lib/store.js");
+
+const sha256 = (value) => createHash("sha256").update(value, "utf8").digest("hex");
+const bundleSha256 = (bundleFiles) => {
+  const manifest = Object.entries(bundleFiles)
+    .map(([rel, content]) => [rel, sha256(content)])
+    .sort(([a], [b]) => a < b ? -1 : a > b ? 1 : 0);
+  return sha256(JSON.stringify(manifest));
+};
 
 after(() => {
   defaultDb.close();
@@ -31,6 +40,7 @@ test("single-file publication exposes metadata and body without staging residue"
 
     assert.ok(existsSync(path.join(runtime.artifactDir, `${created.id}.html`)));
     assert.equal(store.readArtifact(created.id).html, "<!doctype html><h1>Hello</h1>");
+    assert.equal(store.getArtifactMeta(created.id).body_sha256, sha256("<!doctype html><h1>Hello</h1>"));
     assert.deepEqual(readdirSync(runtime.artifactDir).filter((name) => name.includes(".staging-")), []);
   } finally {
     runtime.db.close();
@@ -120,19 +130,22 @@ test("bundle publication exposes the selected entry and linked assets atomically
   const store = createArtifactStore({ db: runtime.db, artifactDir: runtime.artifactDir });
 
   try {
+    const bundleFiles = {
+      "index.html": '<link rel="stylesheet" href="styles/site.css"><h1>Bundle</h1>',
+      "styles/site.css": "h1{color:navy}"
+    };
     const created = store.publishBundle({
       clientId: "publisher",
       org: "acme",
-      files: {
-        "index.html": '<link rel="stylesheet" href="styles/site.css"><h1>Bundle</h1>',
-        "styles/site.css": "h1{color:navy}"
-      },
+      files: bundleFiles,
       title: "Bundle"
     });
 
     assert.ok(existsSync(path.join(runtime.artifactDir, created.id, "index.html")));
     assert.equal(store.readBundleFile(created.id, "").content.toString(), '<link rel="stylesheet" href="styles/site.css"><h1>Bundle</h1>');
     assert.equal(store.readBundleFile(created.id, "styles/site.css").contentType, "text/css; charset=utf-8");
+    assert.equal(store.getArtifactMeta(created.id).body_sha256, bundleSha256(bundleFiles));
+    assert.deepEqual(store.auditStorage().divergentBodies, []);
     assert.deepEqual(readdirSync(runtime.artifactDir).filter((name) => name.includes(".staging-")), []);
   } finally {
     runtime.db.close();
@@ -269,16 +282,62 @@ test("audit recovers a committed-but-uninstalled staged body after a mid-update 
 
   try {
     store.publish({ clientId: "publisher", org: "acme", html: "<h1>V1</h1>" });
-    // Simulate a crash after the metadata commit (bytes now reflect V2) but before the body
+    // Simulate a crash after the metadata commit (bytes and digest now reflect V2) but before the body
     // swap: the V2 body is stranded in a staging file while the final still holds V1.
     const v2 = "<h1>V2 body is a different length</h1>";
-    runtime.db.prepare("UPDATE artifacts SET bytes = ?, revision = 2 WHERE id = 'aud123'").run(Buffer.byteLength(v2));
+    runtime.db.prepare("UPDATE artifacts SET bytes = ?, body_sha256 = ?, revision = 2 WHERE id = 'aud123'")
+      .run(Buffer.byteLength(v2), sha256(v2));
     fs.writeFileSync(path.join(runtime.artifactDir, ".aud123.staging-crash"), v2);
 
     const report = store.auditStorage({ cleanTransient: true });
     assert.ok(report.recoveredPaths.includes(".aud123.staging-crash"));
     assert.equal(store.readArtifact("aud123").html, v2); // committed body is now served, not lost
     assert.deepEqual(readdirSync(runtime.artifactDir).filter((n) => n.includes(".staging-")), []);
+  } finally {
+    runtime.db.close();
+    rmSync(dataDir, { recursive: true, force: true });
+  }
+});
+
+test("audit recovers a committed same-length body by digest without snapshotting stale history", () => {
+  const dataDir = mkdtempSync(path.join(tmpdir(), "artifact-store-auditdigest-"));
+  let runtime = openDatabase({ dataDir });
+  const store = createArtifactStore({ db: runtime.db, artifactDir: runtime.artifactDir, idFactory: () => "digest1" });
+
+  try {
+    const oldBody = "<h1>OLD</h1>";
+    const newBody = "<h1>NEW</h1>";
+    assert.equal(Buffer.byteLength(oldBody), Buffer.byteLength(newBody), "fixture bodies must have equal byte length");
+    store.publish({ clientId: "publisher", org: "acme", html: oldBody, title: "Old" });
+
+    // Reproduce the durable state after update() commits metadata and its outgoing revision
+    // row, but before it moves the old body to history and installs the staged new body.
+    runtime.db.exec(`
+      INSERT INTO artifact_revisions
+        (artifact_id, org, revision, title, description, category, bytes, is_bundle, entry, body_sha256)
+      SELECT id, org, revision, title, description, category, bytes, is_bundle, entry, body_sha256
+      FROM artifacts WHERE id = 'digest1';
+    `);
+    runtime.db.prepare(`
+      UPDATE artifacts
+      SET title = 'New', bytes = ?, body_sha256 = ?, revision = 2
+      WHERE id = 'digest1'
+    `).run(Buffer.byteLength(newBody), sha256(newBody));
+    fs.writeFileSync(path.join(runtime.artifactDir, ".digest1.staging-crash"), newBody);
+
+    runtime.db.close();
+    runtime = openDatabase({ dataDir });
+    const recovered = createArtifactStore({ db: runtime.db, artifactDir: runtime.artifactDir });
+    const report = recovered.auditStorage({ cleanTransient: true });
+
+    assert.ok(report.recoveredPaths.includes(".digest1.staging-crash"));
+    assert.equal(recovered.readArtifact("digest1").html, newBody);
+
+    recovered.update({ id: "digest1", clientId: "publisher", html: "<h1>END</h1>", title: "End" });
+    assert.equal(recovered.readHistoryArtifact("digest1", 1), null, "crash must not snapshot the stale body");
+    const recoveredHistory = recovered.readHistoryArtifact("digest1", 2);
+    assert.equal(recoveredHistory.html, newBody, "next update snapshots the recovered body");
+    assert.equal(recoveredHistory.meta.body_sha256, sha256(newBody));
   } finally {
     runtime.db.close();
     rmSync(dataDir, { recursive: true, force: true });
@@ -376,11 +435,17 @@ test("storage audit reports divergence and cleans only transient paths", () => {
       INSERT INTO artifacts (id, client_id, org, title, description, bytes, uploader_label, is_bundle, entry)
       VALUES ('missing1', 'publisher', 'acme', 'Missing', '', 0, '', 0, '')
     `).run();
+    runtime.db.prepare(`
+      INSERT INTO artifacts (id, client_id, org, title, description, bytes, uploader_label, is_bundle, entry, body_sha256)
+      VALUES ('drift1', 'publisher', 'acme', 'Drifted', '', 9, '', 0, '', ?)
+    `).run(sha256("committed"));
+    fs.writeFileSync(path.join(runtime.artifactDir, "drift1.html"), "tampered!");
     fs.writeFileSync(path.join(runtime.artifactDir, "orphan1.html"), "<h1>Orphan</h1>");
     fs.writeFileSync(path.join(runtime.artifactDir, ".temp123.staging-dead"), "partial");
 
     const report = store.auditStorage({ cleanTransient: true });
     assert.deepEqual(report.missingBodies, ["missing1"]);
+    assert.deepEqual(report.divergentBodies, ["drift1"]);
     assert.deepEqual(report.orphanBodies, ["orphan1.html"]);
     assert.deepEqual(report.transientPaths, [".temp123.staging-dead"]);
     assert.ok(existsSync(path.join(runtime.artifactDir, "orphan1.html")));
