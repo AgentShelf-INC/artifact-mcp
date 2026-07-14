@@ -24,6 +24,7 @@
   ],
   "scripts": {
     "start": "node server.js",
+    "dev": "TRUST_ACCESS_HEADERS=1 node server.js",
     "test": "node --test --test-concurrency=1"
   },
   "dependencies": {

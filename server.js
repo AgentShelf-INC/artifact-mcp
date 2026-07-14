@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright 2026 Neil Blackman
 import { accessSync, constants } from "node:fs";
 import { createApp } from "./lib/app.js";
 import { MCP_JSON_LIMIT } from "./lib/config.js";
@@ -21,7 +23,15 @@ const PORT = Number(process.env.PORT || 3480);
 const PUBLIC_BASE = process.env.PUBLIC_BASE_URL || "http://localhost:3480";
 
 assertReady();
-console.log(`[artifact-mcp] seeded ${seedKeysFromEnv(sha256Hex)} key(s) from env`);
+const seededKeys = seedKeysFromEnv(sha256Hex);
+console.log(`[artifact-mcp] seeded ${seededKeys} key(s) from env`);
+if (seededKeys === 0 && listKeys().filter((k) => !k.revoked_at).length === 0) {
+  console.warn(
+    "[artifact-mcp] WARNING: no upload keys configured — no agent can publish yet. " +
+    "Set ARTIFACT_API_KEYS in .env (see .env.example), or create a key in Settings once signed in. " +
+    "See GETTING_STARTED.md Phase 2."
+  );
+}
 if (ACCESS_IDENTITY_MODE === "jwt") {
   console.log("[artifact-mcp] Access identity: JWT-verified");
 } else if (ACCESS_IDENTITY_MODE === "header-trust") {

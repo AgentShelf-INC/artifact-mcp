@@ -74,6 +74,9 @@ docker compose up -d --build
 docker logs artifact-mcp | grep "Access identity"
 ```
 
+> Prefer running without Docker? `npm install && npm run dev` starts the server directly with
+> loopback header-trust already enabled (equivalent to setting `TRUST_ACCESS_HEADERS=1`).
+
 You should see `Access identity: HEADER-TRUST (…)`. Publish a test artifact:
 
 ```bash
