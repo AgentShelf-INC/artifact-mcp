@@ -91,6 +91,28 @@ test("feedback box anchors persist bounded geometry while points and replies ret
   });
 });
 
+test("feedback persists and lists anchor page identity while legacy and reply rows remain null", () => {
+  withFeedbackStore(({ feedback }) => {
+    const pinned = feedback.addFeedback({
+      artifactId: "artifact-a", org: "acme", viewerEmail: "owner@acme.test", body: "Page two",
+      artifactRevision: 7, anchorPage: "pages/two.html", anchor: { x: 0.25, y: 0.75 }
+    });
+    const legacy = feedback.addFeedback({
+      artifactId: "artifact-a", org: "acme", viewerEmail: "owner@acme.test", body: "Legacy",
+      artifactRevision: 7, anchor: { x: 0.1, y: 0.2 }
+    });
+    const reply = feedback.addFeedback({
+      artifactId: "artifact-a", org: "acme", viewerEmail: "owner@acme.test", body: "Reply",
+      artifactRevision: 7, parentId: pinned.id, anchorPage: "pages/two.html", anchor: { x: 0.2, y: 0.3 }
+    });
+
+    assert.equal(pinned.anchor_page, "pages/two.html");
+    assert.equal(feedback.listForArtifact("artifact-a").find((row) => row.id === pinned.id).anchor_page, "pages/two.html");
+    assert.equal(legacy.anchor_page, null);
+    assert.equal(reply.anchor_page, null);
+  });
+});
+
 test("viewer delete and resolve enforce ownership, admin access, and parent cascade", () => {
   withFeedbackStore(({ feedback }) => {
     const parent = feedback.addFeedback({ artifactId: "artifact-a", org: "acme", viewerEmail: "owner@acme.test", body: "Parent", artifactRevision: 2 });

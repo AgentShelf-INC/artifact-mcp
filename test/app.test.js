@@ -101,7 +101,7 @@ async function serve(app, fn) {
 
 // Exercise a createApp route without opening a socket. Route middleware is unnecessary for
 // these cases because the request body is already decoded by the test harness.
-async function invokeRoute(app, method, path, { headers = {}, params = {}, body } = {}) {
+async function invokeRoute(app, method, path, { headers = {}, params = {}, query = {}, body } = {}) {
   const route = app._router.stack.find((layer) => layer.route?.path === path && layer.route.methods[method]);
   assert.ok(route, `${method.toUpperCase()} ${path} route exists`);
   const handler = route.route.stack.at(-1).handle;
@@ -118,7 +118,7 @@ async function invokeRoute(app, method, path, { headers = {}, params = {}, body 
     end() { return this; },
     redirect(code, location) { result.status = code; result.headers.location = location; return this; }
   };
-  await handler({ headers, params, body }, res);
+  await handler({ headers, params, query, body }, res);
   return result;
 }
 
@@ -508,6 +508,24 @@ test("raw and download HTML stay byte-for-byte original while the anchor variant
   });
 });
 
+test("every anchored bundle HTML page receives a page-aware bridge", async () => {
+  const artifact = { id: "abc123", org: "acme", title: "Bundle", client_id: "publisher", is_bundle: 1, entry: "index.html", revision: 1 };
+  const base = dependencies({ resolveViewer: async () => ({ email: "member@acme.test", org: "acme", isAdmin: false }) });
+  base.artifacts = {
+    ...base.artifacts,
+    getArtifactMeta: () => artifact,
+    readBundleFile: (_id, page) => ({ content: `<h1>${page}</h1>`, contentType: "text/html; charset=utf-8" })
+  };
+
+  const response = await invokeRoute(createApp(base), "get", "/raw/:id/*", {
+    params: { id: "abc123", 0: "pages/two.html" }, query: { anchor: "1" }
+  });
+
+  assert.equal(response.status, 200);
+  assert.match(String(response.body), /artifact-anchor-bridge/);
+  assert.match(String(response.body), /pages\/two\.html/);
+});
+
 test("feedback derives organization and revision from the artifact, not request anchor metadata", async () => {
   let received;
   const artifact = { id: "abc123", org: "acme", title: "Artifact", client_id: "publisher", is_bundle: 0, revision: 7 };
@@ -529,6 +547,77 @@ test("feedback derives organization and revision from the artifact, not request 
   });
   assert.equal(received.org, "acme");
   assert.equal(received.artifactRevision, 7);
+});
+
+test("bundle feedback records a validated anchor page and exposes it on create", async () => {
+  let received;
+  const artifact = { id: "abc123", org: "acme", title: "Bundle", client_id: "publisher", is_bundle: 1, entry: "index.html", revision: 7 };
+  const base = dependencies({ resolveViewer: async () => ({ email: "member@acme.test", org: "acme", isAdmin: false }) });
+  base.artifacts = {
+    ...base.artifacts,
+    getArtifactMeta: () => artifact,
+    readBundleFile: (_id, page) => page === "pages/two.html" ? { content: "<h1>Two</h1>", contentType: "text/html; charset=utf-8" } : null
+  };
+  base.feedback = {
+    listForArtifact: () => [],
+    add(input) {
+      received = input;
+      return {
+        id: "feedback-page-2", viewer_email: input.viewerEmail, body: input.body,
+        created_at: "2026-07-14", artifact_revision: input.artifactRevision,
+        anchor_path: input.anchor.path, anchor_x: input.anchor.x, anchor_y: input.anchor.y,
+        anchor_w: null, anchor_h: null, anchor_approx: 0, anchor_page: input.anchorPage,
+        parent_id: null
+      };
+    }
+  };
+
+  const response = await invokeRoute(createApp(base), "post", "/:id/feedback", {
+    params: { id: "abc123" },
+    body: { body: "Pinned on page two", anchor: { path: "body", x: 0.5, y: 0.5 }, anchor_page: "pages/two.html" }
+  });
+
+  assert.equal(response.status, 200);
+  assert.equal(received.anchorPage, "pages/two.html");
+  assert.equal(response.body.anchor_page, "pages/two.html");
+});
+
+test("bundle anchor pages reject traversal, absolute, missing, and non-HTML paths", async () => {
+  const artifact = { id: "abc123", org: "acme", title: "Bundle", client_id: "publisher", is_bundle: 1, entry: "index.html", revision: 7 };
+  const base = dependencies({ resolveViewer: async () => ({ email: "member@acme.test", org: "acme", isAdmin: false }) });
+  base.artifacts = {
+    ...base.artifacts,
+    getArtifactMeta: () => artifact,
+    readBundleFile: (_id, page) => page === "styles/site.css" ? { content: "", contentType: "text/css; charset=utf-8" } : null
+  };
+  base.feedback = { listForArtifact: () => [], add() { throw new Error("invalid page reached feedback store"); } };
+  const app = createApp(base);
+
+  for (const anchorPage of [undefined, "../two.html", "pages/../two.html", "/pages/two.html", "C:\\pages\\two.html", "pages/missing.html", "styles/site.css"]) {
+    const response = await invokeRoute(app, "post", "/:id/feedback", {
+      params: { id: "abc123" },
+      body: { body: "Invalid", anchor: { x: 0.5, y: 0.5 }, anchor_page: anchorPage }
+    });
+    assert.equal(response.status, 400, anchorPage);
+    assert.match(response.body.error, /anchor_page/);
+  }
+});
+
+test("bundle shell marks anchors stale when their recorded page no longer exists", async () => {
+  let shellFeedback;
+  const artifact = { id: "abc123", org: "acme", title: "Bundle", client_id: "publisher", is_bundle: 1, entry: "index.html", revision: 7 };
+  const base = dependencies({ resolveViewer: async () => ({ email: "member@acme.test", org: "acme", isAdmin: false }) });
+  base.artifacts = { ...base.artifacts, getArtifactMeta: () => artifact, readBundleFile: () => null };
+  base.feedback = { listForArtifact: () => [{ id: "missing-page", anchor_page: "removed.html", anchor_x: 0.5, anchor_y: 0.5 }] };
+  base.pages = {
+    ...base.pages,
+    shell(_meta, _nav, _reaction, rows) { shellFeedback = rows; return "shell"; }
+  };
+
+  const response = await invokeRoute(createApp(base), "get", "/:id", { params: { id: "abc123" } });
+
+  assert.equal(response.status, 200);
+  assert.equal(shellFeedback[0].anchor_page_stale, true);
 });
 
 test("viewer feedback management routes scope feedback to the artifact and enforce own-or-admin results", async () => {

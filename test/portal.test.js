@@ -35,3 +35,19 @@ test("viewer shell includes an escaped public-share drawer", () => {
   assert.match(html, /var shareArtifactId="abc123"/);
   assert.doesNotMatch(html, /<script><\/script><img>/);
 });
+
+test("bundle shell scopes anchors to the current page and resets bridge state on navigation", () => {
+  const bundle = { ...meta, is_bundle: 1, entry: "index.html" };
+  const feedback = [
+    { id: "entry", parent_id: null, anchor_page: "index.html", anchor_x: 0.1, anchor_y: 0.2, artifact_revision: 3 },
+    { id: "page-two", parent_id: null, anchor_page: "pages/two.html", anchor_x: 0.3, anchor_y: 0.4, artifact_revision: 3 },
+    { id: "legacy", parent_id: null, anchor_page: null, anchor_x: 0.5, anchor_y: 0.6, artifact_revision: 3 }
+  ];
+  const html = renderArtifactShell(bundle, nav, {}, feedback);
+
+  assert.match(html, /anchor_page/);
+  assert.match(html, /pin\.page===null\|\|pin\.page===currentPage/);
+  assert.match(html, /bridgeReady=false/);
+  assert.match(html, /hideAllMarkers/);
+  assert.match(html, /anchor_page:anchor&&anchor\.page/);
+});
