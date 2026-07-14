@@ -71,7 +71,7 @@ umbrella). Both light and dark themes ship; light shown here.*
   artifact. Links are protected by an unguessable token and can expire or be revoked; they are
   deliberately public to anyone who has the URL.
 - **Strict isolation** — each key is locked to its org; each viewer is scoped to their org by
-  verified email domain. Cross-org requests 404. Admins see every org.
+  verified email domain. Cross-org reads return 404; cross-org mutations for a known id return 403. Admins see every org.
 
 ### Organize
 - **Categories** — group an org's artifacts into per-category carousels; edit an artifact's
@@ -102,7 +102,8 @@ umbrella). Both light and dark themes ship; light shown here.*
 - **Per-org Discord webhooks** — register one or more webhooks per org, each subscribed to any of
   six events (`published`, `updated`, `restored`, `deleted`, `feedback`, `resolved`). Route
   publishes to `#artifacts` and feedback to `#feedback`, etc. URLs are validated to the Discord
-  host, stored masked, and delivery is fire-and-forget (never blocks a request). Test button.
+  host, masked in the UI and API responses (the URL is stored as-is at rest — see the Security
+  model), and delivery is fire-and-forget (never blocks a request). Test button.
 
 ### Operate
 - **Settings (admin)** — manage orgs / domains / categories / webhooks, and generate/revoke
@@ -294,7 +295,8 @@ Access allow-policy. Let an org **publish**: generate a key for it in Settings.
   constant, and the shell parent **never reads the iframe DOM**: all anchor data arrives via
   `postMessage`, validated by frame identity and a type allowlist, and treated as untrusted.
 - **Webhooks** — URLs are validated to the Discord webhook host (no SSRF to arbitrary hosts),
-  stored/returned masked, and delivered fire-and-forget with a timeout and no redirect following.
+  masked in responses but stored as-is at rest (restrict DB/volume access or encrypt accordingly),
+  and delivered fire-and-forget with a timeout and no redirect following.
 - **View privacy** — named viewer lists reach only admins and the owning agent; never cross-tenant.
 - **Public shares** — a share is unlisted public, not private: anyone with its URL can view the
   live artifact. A random URL-safe token, server-side expiry, and immediate revoke are its access

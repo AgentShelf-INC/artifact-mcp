@@ -3,3 +3,5 @@ data/
 .env
 .local/
 .codex/
+.devdata/
+*.log

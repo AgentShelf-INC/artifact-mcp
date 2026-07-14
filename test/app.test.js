@@ -16,6 +16,8 @@ async function withIdentityEnv(values, fn) {
     "CF_ACCESS_AUD",
     "TRUST_ACCESS_HEADERS",
     "REQUIRE_ACCESS_JWT",
+    "LISTEN_HOST",
+    "HEADER_TRUST_ALLOW_INSECURE",
     "ADMIN_EMAILS",
     "ADMIN_EMAIL_DOMAINS",
     "ORG_EMAIL_DOMAINS"
@@ -183,6 +185,19 @@ test("REQUIRE_ACCESS_JWT=1 rejects startup readiness without complete JWT config
   await withIdentityEnv({ REQUIRE_ACCESS_JWT: "1" }, async (identity) => {
     assert.equal(identity.ACCESS_IDENTITY_MODE, "disabled");
     assert.throws(() => identity.assertReady(), /REQUIRE_ACCESS_JWT=1.*CF_ACCESS_TEAM_DOMAIN.*CF_ACCESS_AUD/);
+  });
+});
+
+test("header-trust refuses a non-loopback bind unless explicitly acknowledged", async () => {
+  await withIdentityEnv({ TRUST_ACCESS_HEADERS: "1", LISTEN_HOST: "0.0.0.0" }, async (identity) => {
+    assert.equal(identity.ACCESS_IDENTITY_MODE, "header-trust");
+    assert.throws(() => identity.assertReady(), /non-loopback bind/);
+  });
+  await withIdentityEnv({ TRUST_ACCESS_HEADERS: "1", LISTEN_HOST: "127.0.0.1" }, async (identity) => {
+    assert.doesNotThrow(() => identity.assertReady());
+  });
+  await withIdentityEnv({ TRUST_ACCESS_HEADERS: "1", LISTEN_HOST: "0.0.0.0", HEADER_TRUST_ALLOW_INSECURE: "1" }, async (identity) => {
+    assert.doesNotThrow(() => identity.assertReady());
   });
 });
 

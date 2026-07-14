@@ -93,4 +93,5 @@ const app = createApp({
   }
 });
 
-app.listen(PORT, () => console.log(`[artifact-mcp] listening on :${PORT}`));
+const LISTEN_HOST = process.env.LISTEN_HOST || "0.0.0.0";
+app.listen(PORT, LISTEN_HOST, () => console.log(`[artifact-mcp] listening on ${LISTEN_HOST}:${PORT}`));

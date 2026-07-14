@@ -13,9 +13,10 @@ and a fix or mitigation will be coordinated before public disclosure.
   viewers are scoped to their org by verified identity. Cross-org reads/writes 404.
 - **Viewer identity** is intended to run behind [Cloudflare Access](https://developers.cloudflare.com/cloudflare-one/policies/access/).
   When `CF_ACCESS_TEAM_DOMAIN` + `CF_ACCESS_AUD` are set the app **verifies the
-  Access JWT**, so identity/org cannot be spoofed. With those unset the app trusts
-  the `Cf-Access-Authenticated-User-Email` header — safe only when the app is not
-  directly reachable (e.g. local dev on loopback). **Set the JWT vars in production.**
+  Access JWT**, so identity/org cannot be spoofed. With those unset the app **fails
+  closed** — no request can obtain a viewer/admin identity from a header. Header trust is
+  an explicit loopback-only dev opt-in (`TRUST_ACCESS_HEADERS=1`) that additionally refuses
+  to start on a non-loopback bind. **Set the JWT vars in production.**
 - **Untrusted artifact content** is served with a CSP sandbox (no `allow-same-origin`)
   on every raw/download/share response, so it runs in a null origin.
 - **Public share links** (`/s/:token`) are opt-in, read-only, `noindex`, `no-store`,

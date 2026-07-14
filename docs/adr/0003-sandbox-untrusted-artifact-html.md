@@ -11,11 +11,11 @@ Bundles require scripts, forms, modals, popups, and non-HTML assets to keep work
 
 ## Decision
 
-Every raw response whose content type is HTML receives this CSP sandbox policy:
+Every raw response receives this CSP sandbox policy — not only `text/html`. Active non-HTML types (`.svg`, `.xml`) execute as documents on direct navigation, so they are sandboxed too:
 
 `sandbox allow-scripts allow-popups allow-forms allow-modals`
 
-The policy deliberately omits `allow-same-origin`, so the document receives an opaque origin. Download responses keep both the sandbox policy and attachment disposition. Non-HTML bundle assets receive normal content and safety headers without the document sandbox directive.
+The policy deliberately omits `allow-same-origin`, so the document receives an opaque origin. Download responses keep both the sandbox policy and attachment disposition. Non-HTML bundle assets are served with the same sandbox directive (harmless when they load as subresources), which closes the direct-navigation gap for active types like SVG/XML.
 
 The shell iframe remains sandboxed as a second enforcement point.
 

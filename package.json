@@ -24,7 +24,7 @@
   ],
   "scripts": {
     "start": "node server.js",
-    "dev": "TRUST_ACCESS_HEADERS=1 node server.js",
+    "dev": "LISTEN_HOST=127.0.0.1 TRUST_ACCESS_HEADERS=1 DATA_DIR=.devdata node --env-file-if-exists=.env server.js",
     "test": "node --test --test-concurrency=1"
   },
   "dependencies": {

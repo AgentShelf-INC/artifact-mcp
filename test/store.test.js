@@ -92,6 +92,28 @@ test("moving an artifact re-tenants every composite-FK child atomically", () => 
   }
 });
 
+test("publisher artifact listing is org-scoped so an org move does not leak to the old key", () => {
+  const dataDir = mkdtempSync(path.join(tmpdir(), "artifact-store-leak-"));
+  const runtime = openDatabase({ dataDir });
+  const store = createArtifactStore({
+    db: runtime.db,
+    artifactDir: runtime.artifactDir,
+    idFactory: () => "leak1",
+    orgExists: (org) => org === "acme" || org === "beta"
+  });
+  try {
+    store.publish({ clientId: "publisher", org: "acme", html: "<h1>One</h1>" });
+    store.moveArtifactToOrg("leak1", "beta");
+    // The move preserves client_id; the original-org key must NOT keep listing the artifact.
+    assert.equal(store.listForClient("publisher", "acme").length, 0, "old-org key sees nothing");
+    assert.equal(store.listForClient("publisher", "beta").length, 1, "new-org key sees it");
+    assert.equal(store.listForClient("publisher").length, 1, "admin (no org scope) still sees it");
+  } finally {
+    runtime.db.close();
+    rmSync(dataDir, { recursive: true, force: true });
+  }
+});
+
 test("bundle publication exposes the selected entry and linked assets atomically", () => {
   const dataDir = mkdtempSync(path.join(tmpdir(), "artifact-store-bundle-"));
   const runtime = openDatabase({ dataDir });
