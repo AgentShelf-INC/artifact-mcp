@@ -4,6 +4,7 @@
 data/
 .git/
 .local/
+.codex/
 node_modules/
 coverage/
 *.log
