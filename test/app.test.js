@@ -4,6 +4,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createApp } from "../lib/app.js";
+import { createArtifactPreviewNotifier } from "../lib/preview.js";
 
 const identityDataDir = mkdtempSync(join(tmpdir(), "artifact-mcp-identity-"));
 process.env.DATA_DIR = identityDataDir;
@@ -749,4 +750,46 @@ test("authorized MCP requests retain their JSON-RPC response contract", async ()
     assert.deepEqual(context, { clientId: "publisher", org: "acme", label: "Agent" });
     assert.deepEqual(await response.json(), { jsonrpc: "2.0", id: 7, result: { accepted: true } });
   });
+});
+
+test("viewer restores pass the updated artifact revision to the notifier seam", async () => {
+  const emitted = [];
+  const artifact = { id: "abc123", org: "acme", title: "Artifact", client_id: "publisher", is_bundle: 0, revision: 2 };
+  const base = dependencies({
+    resolveViewer: async () => ({ email: "member@acme.test", org: "acme", isAdmin: false }),
+    notify: { emit: (...args) => emitted.push(args), test: async () => ({ ok: true }) }
+  });
+  base.artifacts = {
+    ...base.artifacts,
+    getArtifactMeta: () => artifact,
+    restoreArtifactRevision: () => ({ ok: true, id: artifact.id, revision: 2, restoredFrom: 1, bytes: 10 })
+  };
+
+  const response = await invokeRoute(createApp(base), "post", "/:id/restore", {
+    params: { id: artifact.id },
+    body: { revision: 1 }
+  });
+  assert.equal(response.status, 200);
+  assert.equal(emitted[0][0], "restored");
+  assert.deepEqual(emitted[0][3].artifactMeta, artifact);
+});
+
+test("preview notifier preserves the admin webhook test action", async () => {
+  const webhook = { id: "wh1", org: "acme", url: "https://discord.com/api/webhooks/1/test" };
+  const notify = createArtifactPreviewNotifier({
+    artifacts: dependencies().artifacts,
+    renderer: { enabled: false },
+    notify: { emit() {}, test: async (row) => ({ ok: row === webhook }) }
+  });
+  const app = createApp(dependencies({
+    resolveViewer: async () => ({ email: "admin@example.test", org: "admin", isAdmin: true }),
+    webhooks: { get: () => webhook },
+    notify
+  }));
+
+  const response = await invokeRoute(app, "post", "/settings/orgs/:name/webhooks/:id/test", {
+    params: { name: "acme", id: "wh1" }
+  });
+  assert.equal(response.status, 200);
+  assert.deepEqual(response.body, { ok: true });
 });

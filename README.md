@@ -15,7 +15,8 @@ analytics, public share links, and per-org notifications.
 
 Not a hosted primitive that publishes to someone else's cloud — **a platform you run**, with real
 multi-organization tenancy, for teams that want to own their work. One container, SQLite + files on
-disk, no third-party lock-in.
+disk, no third-party lock-in. The default deployment is one core container; preview thumbnails add
+an optional browser sidecar.
 
 ### Built for teams, not just a publish button
 
@@ -105,6 +106,9 @@ umbrella). Both light and dark themes ship; light shown here.*
   host, masked in every UI/API response, and encrypted at rest with `WEBHOOK_ENC_KEY`. The
   documented no-key mode preserves zero-config with a loud plaintext-storage warning. Delivery is
   fire-and-forget (never blocks a request). Test button.
+- **Optional preview thumbnails** — single-file `published`, `updated`, and `restored` events can
+  attach a rendered PNG. This is off by default and uses a separate Playwright sidecar, so the core
+  image has no browser dependency. Bundles and feedback/resolved/deleted events remain text-only.
 
 ### Operate
 - **Settings (admin)** — manage orgs / domains / categories / webhooks, and generate/revoke
@@ -225,6 +229,8 @@ For domain language, invariants, module seams, and workflows, see [`CONTEXT.md`]
 |---|---|
 | `ARTIFACT_API_KEYS` | Bootstrap keys, `clientId:org:secret` comma-separated (DB is authoritative after first boot) |
 | `WEBHOOK_ENC_KEY` | Optional 32-byte base64 AES-256-GCM key for Discord webhook URLs; unset preserves plaintext fallback with a startup warning |
+| `PREVIEW_RENDERER_URL` | Optional internal renderer base URL; unset keeps Discord embeds byte-for-byte text-only |
+| `PREVIEW_RENDER_TIMEOUT_MS` / `PREVIEW_VIEWPORT` | Optional renderer timeout (default `8000`) and social-card crop (default `1200x630`) |
 | `ORG_EMAIL_DOMAINS` | Optional `domain:org` seeds — the registry (managed in Settings) is authoritative; default: the email domain **is** the org |
 | `ADMIN_EMAILS` / `ADMIN_EMAIL_DOMAINS` | Who sees every org |
 | `CF_ACCESS_TEAM_DOMAIN` + `CF_ACCESS_AUD` | Enable Access JWT verification (production) |
@@ -255,6 +261,26 @@ Encrypted rows cannot be opened with a replacement key, so do not simply overwri
    with the new key. Keep the old key as long as any backup containing old encrypted rows is kept.
 
 This procedure has a brief notification outage but never writes decrypted URLs back to SQLite.
+
+### Optional: Discord preview thumbnails
+
+Add this to `.env`:
+
+```dotenv
+PREVIEW_RENDERER_URL=http://artifact-preview:3000
+```
+
+Then start and smoke-test the profile:
+
+```bash
+docker compose --profile preview up -d --build
+docker compose exec artifact-preview npm run smoke
+```
+
+The sidecar renders attacker-controlled HTML. Keep the shipped internal-only network, resource
+limits, non-root Chromium sandbox, and browser request blocking intact. Do not publish its port,
+attach it to the tunnel, mount host/app data, or give it secrets. If it is absent, slow, or errors,
+notifications automatically fall back to the existing text embed without blocking publication.
 
 ## Quick start
 
@@ -319,6 +345,10 @@ Access allow-policy. Let an org **publish**: generate a key for it in Settings.
   Without it, the service remains zero-config and stores URLs in plaintext after a prominent
   one-time startup warning. URLs are decrypted only for delivery, which is fire-and-forget with a
   timeout and no redirect following.
+- **Preview renderer** — optional and off by default. It receives HTML bodies rather than gated
+  artifact URLs, runs without host/data/secret mounts on an internal network with no egress, blocks
+  browser network requests/navigation, uses an ephemeral Chromium context, and has hard time and
+  memory limits. The renderer has no public or tunnel exposure.
 - **View privacy** — named viewer lists reach only admins and the owning agent; never cross-tenant.
 - **Public shares** — a share is unlisted public, not private: anyone with its URL can view the
   live artifact. A random URL-safe token, server-side expiry, and immediate revoke are its access

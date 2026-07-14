@@ -6,6 +6,7 @@ data/
 .local/
 .codex/
 node_modules/
+preview-renderer/
 coverage/
 *.log
 *.bak

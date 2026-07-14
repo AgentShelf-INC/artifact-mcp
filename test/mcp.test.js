@@ -32,6 +32,33 @@ test("MCP enforces the published tool input schemas", async () => {
   assert.match(nested.error.message, /files\.index\.html must be a string/);
 });
 
+test("MCP artifact events expose revision metadata through the notifier seam", async () => {
+  const events = [];
+  const notify = (...args) => events.push(args);
+  const published = await handleMcp({
+    jsonrpc: "2.0",
+    id: 200,
+    method: "tools/call",
+    params: { name: "publish_artifact", arguments: { html: "<h1>Preview seam</h1>" } }
+  }, auth, { notify });
+  const id = published.result.structuredContent.id;
+
+  assert.equal(events.length, 1);
+  assert.equal(events[0][0], "published");
+  assert.equal(events[0][3].artifactMeta.id, id);
+  assert.equal(events[0][3].artifactMeta.revision, 1);
+  assert.equal(events[0][3].artifactMeta.is_bundle, 0);
+
+  await handleMcp({
+    jsonrpc: "2.0",
+    id: 201,
+    method: "tools/call",
+    params: { name: "publish_bundle", arguments: { files: { "index.html": "<h1>Bundle</h1>" } } }
+  }, auth, { notify });
+  assert.equal(events[1][0], "published");
+  assert.equal(events[1][3].artifactMeta.is_bundle, 1);
+});
+
 test("artifact_stats exposes named audience data only to the owner or an admin", async () => {
   const published = await call("publish_artifact", { html: "<h1>Stats</h1>" }, 3);
   const id = published.result.structuredContent.id;

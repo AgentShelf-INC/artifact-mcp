@@ -22,6 +22,37 @@ services:
       start_period: 20s
     labels:
       - "autoheal=true"
+    networks:
+      - default
+      - preview_internal
+
+  artifact-preview:
+    profiles: ["preview"]
+    build: ./preview-renderer
+    container_name: artifact-preview
+    restart: unless-stopped
+    init: true
+    user: pwuser
+    read_only: true
+    tmpfs:
+      - /tmp:size=256m,mode=1777
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+      - seccomp:./preview-renderer/seccomp_profile.json
+    pids_limit: 256
+    mem_limit: 768m
+    cpus: "1.0"
+    shm_size: 256m
+    networks:
+      - preview_internal
+    healthcheck:
+      test: ["CMD", "node", "-e", "require('http').get('http://localhost:3000/health', r => process.exit(r.statusCode === 200 ? 0 : 1)).on('error', () => process.exit(1))"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
 
   # Uncomment for tunnel-only ingress; then remove the app's `ports:` publish entirely.
   # Configure the tunnel's origin service as http://artifact-mcp:3480.
@@ -34,3 +65,7 @@ services:
   #     - TUNNEL_TOKEN=${TUNNEL_TOKEN}
   #   depends_on:
   #     - artifact-mcp
+
+networks:
+  preview_internal:
+    internal: true

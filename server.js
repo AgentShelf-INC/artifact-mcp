@@ -19,6 +19,7 @@ import { addFeedback, listForArtifact as feedbackForArtifact, getFeedback, delet
 import * as webhooks from "./lib/webhooks.js";
 import * as notify from "./lib/notify.js";
 import * as notifications from "./lib/notifications.js";
+import { createArtifactPreviewNotifier } from "./lib/preview.js";
 
 const PORT = Number(process.env.PORT || 3480);
 const PUBLIC_BASE = process.env.PUBLIC_BASE_URL || "http://localhost:3480";
@@ -57,9 +58,11 @@ if (storageReport.missingBodies.length || storageReport.orphanBodies.length) {
   );
 }
 
+const artifactNotifier = createArtifactPreviewNotifier({ artifacts: artifactStore, notify });
+
 const app = createApp({
   checkPublisherKey: checkKey,
-  handleMcp,
+  handleMcp: (payload, auth) => handleMcp(payload, auth, { notify: artifactNotifier.emit }),
   resolveViewer,
   artifacts: artifactStore,
   shares,
@@ -78,7 +81,7 @@ const app = createApp({
     colorMap: orgs.colorMap
   },
   webhooks,
-  notify,
+  notify: artifactNotifier,
   notifications,
   reactions: { get: getReaction, set: setReaction, forViewer: reactionsFor, sentiment: sentimentMap },
   views,

@@ -17,7 +17,8 @@ moving on.
 - An MCP endpoint (`POST /mcp`) where authorized agents publish HTML artifacts and get back a URL.
 - A private, org-scoped gallery for humans, gated by Cloudflare Access (SSO).
 - Optional public, unguessable share links under `/s/:token`.
-- One container, SQLite + files on disk, no database server.
+- One core container by default, SQLite + files on disk, no database server. Preview thumbnails add
+  an optional browser sidecar.
 
 ## Prerequisites
 
@@ -47,6 +48,7 @@ Open `.env`. The only value you must set to boot is a bootstrap publishing key.
 |---|---|---|
 | `ARTIFACT_API_KEYS` | **yes** | `clientId:org:secret` (comma-separated for several). The DB is authoritative after first boot; this just seeds the first key. Use a long random secret. |
 | `WEBHOOK_ENC_KEY` | recommended | A 32-byte base64 key that encrypts Discord webhook URLs in SQLite with AES-256-GCM. If omitted, webhooks remain zero-config but are stored in plaintext and startup warns loudly. |
+| `PREVIEW_RENDERER_URL` | optional | Enables Discord PNG previews for single-file publish/update/restore events. Leave unset for the default text-only behavior. |
 | `PUBLIC_BASE_URL` | prod | Your real `https://artifact.your-domain`. Defaults to `http://localhost:3480`. Used to build share URLs. |
 | `ADMIN_EMAILS` | prod | Comma-separated emails that see every org (the admin gallery). |
 | `CF_ACCESS_TEAM_DOMAIN` + `CF_ACCESS_AUD` | prod | Turns on Access JWT verification. Set both in Phase 4. |
@@ -179,6 +181,25 @@ Once you can sign in as admin at `https://artifact.your-domain/settings`:
 - **Notifications (optional):** Settings → add a per-org Discord webhook and pick which events it
   receives. The UI and HTTP responses always show a masked URL. With `WEBHOOK_ENC_KEY` configured,
   the full URL is encrypted at rest; without it, the documented plaintext fallback applies.
+
+### Optional: Discord preview thumbnails
+
+To add inline PNG previews for single-file publish/update/restore notifications, set this in
+`.env`:
+
+```dotenv
+PREVIEW_RENDERER_URL=http://artifact-preview:3000
+```
+
+Then enable the renderer profile:
+
+```bash
+docker compose --profile preview up -d --build
+```
+
+The renderer processes untrusted HTML. It must remain on the shipped internal-only network with no
+published port, tunnel route, host/app-data mounts, or secrets. Bundles remain text-only. Removing
+`PREVIEW_RENDERER_URL` turns the feature fully off; renderer failures also fall back to text embeds.
 
 **Check:** a freshly generated key can publish; the artifact appears in that org's gallery section.
 
