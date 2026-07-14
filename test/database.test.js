@@ -28,6 +28,10 @@ test("fresh databases apply ordered migrations with foreign keys enabled", () =>
     assert.equal(runtime.db.pragma("foreign_keys", { simple: true }), 1);
     const foreignKeys = runtime.db.prepare("PRAGMA foreign_key_list(reactions)").all();
     assert.ok(foreignKeys.some((fk) => fk.table === "artifacts" && fk.on_delete === "CASCADE"));
+    assert.deepEqual(
+      runtime.db.prepare("PRAGMA table_info(notification_reads)").all().map((column) => column.name),
+      ["viewer_email", "seen_at"]
+    );
   } finally {
     runtime.db.close();
     rmSync(dataDir, { recursive: true, force: true });

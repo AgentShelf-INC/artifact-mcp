@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { renderArtifactShell } from "../lib/portal.js";
+import { renderArtifactShell, renderGallery } from "../lib/portal.js";
 
 const meta = { id: "abc123", org: "acme", title: "Artifact", client_id: "owner", uploader_label: "", is_bundle: 0, revision: 3, bytes: 1, category: "" };
 const nav = { prevId: null, nextId: null, index: 1, total: 1 };
@@ -23,6 +23,26 @@ test("feedback drawer nests one-level replies and only renders viewer management
   const adminHtml = renderArtifactShell(meta, nav, {}, feedback, {}, { email: "admin@acme.test", isAdmin: true });
   const adminDrawer = adminHtml.slice(adminHtml.indexOf('<aside class="vfb-panel" id="vfb-panel"'), adminHtml.indexOf('</aside>', adminHtml.indexOf('<aside class="vfb-panel" id="vfb-panel"')));
   assert.equal((adminDrawer.match(/data-feedback-action=/g) || []).length, 4);
+});
+
+test("notification rows link to a feedback deep link and the shell focuses its fid parameter", () => {
+  const gallery = renderGallery(
+    { email: "viewer@acme.test", org: "acme", isAdmin: false },
+    [{ org: "acme", items: [] }], new Map(), new Map(), new Map(), new Map(), {},
+    { unread: 1, items: [{ id: "feedback-1", artifact_id: "artifact-1", artifact_title: "Quarterly <report>", viewer_email: "author@acme.test", body: "Please review", created_at: "2026-07-14 10:00:00", unread: 1 }] }
+  );
+  assert.match(gallery, /href="\/artifact-1\?feedback=feedback-1"/);
+  assert.match(gallery, /class="notif-count"[^>]*>1</);
+  assert.match(gallery, /Quarterly &lt;report&gt;/);
+  assert.doesNotMatch(gallery, /Quarterly <report>/);
+
+  const shell = renderArtifactShell(
+    { id: "artifact-1", org: "acme", title: "Report", client_id: "publisher", revision: 1, is_bundle: 0, category: "" },
+    { prevId: null, nextId: null, index: 1, total: 1 }, {},
+    [{ id: "feedback-1", viewer_email: "author@acme.test", body: "Please review", parent_id: null, resolved_at: null, artifact_revision: 1 }]
+  );
+  assert.match(shell, /new URLSearchParams\(window\.location\.search\)\.get\('feedback'\)/);
+  assert.match(shell, /focusFeedback\(requestedFeedback\)/);
 });
 
 test("viewer shell includes an escaped public-share drawer", () => {

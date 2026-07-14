@@ -136,6 +136,26 @@ test("Access identity fails closed when JWT and explicit header trust are both o
   });
 });
 
+test("signed-in viewers can advance only their own notification watermark", async () => {
+  const seen = [];
+  const app = createApp(dependencies({
+    resolveViewer: async () => ({ email: "viewer@acme.test", org: "acme", isAdmin: false }),
+    notifications: { recentForViewer: () => [], unreadCount: () => 0, markSeen: (email) => seen.push(email) }
+  }));
+  const response = await invokeRoute(app, "post", "/notifications/seen");
+  assert.equal(response.status, 200);
+  assert.deepEqual(response.body, { ok: true });
+  assert.deepEqual(seen, ["viewer@acme.test"]);
+
+  const unsigned = createApp(dependencies({
+    resolveViewer: async () => ({ email: null, org: null, isAdmin: false }),
+    notifications: { recentForViewer: () => [], unreadCount: () => 0, markSeen: (email) => seen.push(email) }
+  }));
+  const denied = await invokeRoute(unsigned, "post", "/notifications/seen");
+  assert.equal(denied.status, 403);
+  assert.deepEqual(seen, ["viewer@acme.test"]);
+});
+
 test("TRUST_ACCESS_HEADERS=1 explicitly restores local-development header identity", async () => {
   await withIdentityEnv(
     { TRUST_ACCESS_HEADERS: "1", ADMIN_EMAILS: "admin@example.test" },

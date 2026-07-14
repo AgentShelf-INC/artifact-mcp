@@ -18,6 +18,7 @@ import * as shares from "./lib/shares.js";
 import { addFeedback, listForArtifact as feedbackForArtifact, getFeedback, deleteFeedback, resolveByViewer } from "./lib/feedback.js";
 import * as webhooks from "./lib/webhooks.js";
 import * as notify from "./lib/notify.js";
+import * as notifications from "./lib/notifications.js";
 
 const PORT = Number(process.env.PORT || 3480);
 const PUBLIC_BASE = process.env.PUBLIC_BASE_URL || "http://localhost:3480";
@@ -78,6 +79,7 @@ const app = createApp({
   },
   webhooks,
   notify,
+  notifications,
   reactions: { get: getReaction, set: setReaction, forViewer: reactionsFor, sentiment: sentimentMap },
   views,
   feedback: { add: addFeedback, listForArtifact: feedbackForArtifact, getFeedback, deleteFeedback, resolveByViewer },
