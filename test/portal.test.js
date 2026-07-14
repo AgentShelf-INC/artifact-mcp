@@ -71,3 +71,26 @@ test("bundle shell scopes anchors to the current page and resets bridge state on
   assert.match(html, /hideAllMarkers/);
   assert.match(html, /anchor_page:anchor&&anchor\.page/);
 });
+
+test("preview and viewer iframes are cache-busted by artifact content version", () => {
+  const sha = "deadbeefcafebabe0011";
+  const item = { id: "abc123", org: "acme", title: "Artifact", client_id: "owner", uploader_label: "", is_bundle: 0, revision: 5, body_sha256: sha, bytes: 1, category: "" };
+  const gallery = renderGallery({ email: "v@acme.test", org: "acme", isAdmin: false }, [{ org: "acme", items: [item] }]);
+  // preview src carries the body digest (first 12 chars), so a revised body yields a new URL
+  assert.match(gallery, /src="\/raw\/abc123\?preview&v=deadbeefcafe"/);
+
+  // digest, not revision, drives the token when body_sha256 is present
+  const shell = renderArtifactShell({ ...item }, nav, {}, []);
+  assert.match(shell, /\/raw\/abc123\?anchor=1&v=deadbeefcafe/);
+
+  // a changed body digest changes the token (cache is actually busted)
+  const gallery2 = renderGallery({ email: "v@acme.test", org: "acme", isAdmin: false }, [{ org: "acme", items: [{ ...item, body_sha256: "0000000000001111" }] }]);
+  assert.match(gallery2, /\?preview&v=000000000000"/);
+  assert.doesNotMatch(gallery2, /v=deadbeefcafe/);
+
+  // falls back to revision when no digest yet (pre-PBI-022 rows), and omits the param when neither exists
+  const noDigest = renderGallery({ email: "v@acme.test", org: "acme", isAdmin: false }, [{ org: "acme", items: [{ ...item, body_sha256: null }] }]);
+  assert.match(noDigest, /\?preview&v=5"/);
+  const noVersion = renderGallery({ email: "v@acme.test", org: "acme", isAdmin: false }, [{ org: "acme", items: [{ ...item, body_sha256: null, revision: null }] }]);
+  assert.match(noVersion, /src="\/raw\/abc123\?preview"/);
+});
