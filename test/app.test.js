@@ -547,27 +547,63 @@ test("every anchored bundle HTML page receives a page-aware bridge", async () =>
   assert.match(String(response.body), /pages\/two\.html/);
 });
 
-test("feedback derives organization and revision from the artifact, not request anchor metadata", async () => {
-  let received;
+test("same-org viewers can fetch the current feedback list", async () => {
+  const rows = [{ id: "feedback1", artifact_id: "abc123", body: "Review this" }];
+  const app = createApp(dependencies({
+    resolveViewer: async () => ({ email: "member@acme.test", org: "acme", isAdmin: false }),
+    feedback: { listForArtifact: (id) => id === "abc123" ? rows : [] }
+  }));
+
+  const response = await invokeRoute(app, "get", "/:id/feedback", { params: { id: "abc123" } });
+
+  assert.equal(response.status, 200);
+  assert.equal(response.headers["cache-control"], "no-store");
+  assert.deepEqual(response.body, rows);
+});
+
+test("feedback lists conceal artifacts from cross-org viewers", async () => {
+  let reads = 0;
+  const app = createApp(dependencies({
+    feedback: { listForArtifact: () => { reads += 1; return []; } }
+  }));
+
+  const response = await invokeRoute(app, "get", "/:id/feedback", { params: { id: "abc123" } });
+
+  assert.equal(response.status, 404);
+  assert.equal(response.headers["cache-control"], "no-store");
+  assert.deepEqual(response.body, { error: "Not found" });
+  assert.equal(reads, 0);
+});
+
+test("feedback rejects unknown and server-owned request fields without writing", async () => {
+  let writes = 0;
   const artifact = { id: "abc123", org: "acme", title: "Artifact", client_id: "publisher", is_bundle: 0, revision: 7 };
   const base = dependencies({ resolveViewer: async () => ({ email: "member@acme.test", org: "acme", isAdmin: false }) });
   base.artifacts = { ...base.artifacts, getArtifactMeta: () => artifact };
   base.feedback = {
     listForArtifact: () => [],
-    add(input) {
-      received = input;
-      return { id: "feedback1", viewer_email: input.viewerEmail, body: input.body, created_at: "2026-07-12", artifact_revision: input.artifactRevision, anchor_path: input.anchor.path, anchor_x: input.anchor.x, anchor_y: input.anchor.y, anchor_approx: 0 };
-    }
+    add() { writes += 1; }
   };
-  await serve(createApp(base), async (baseUrl) => {
-    const response = await fetch(`${baseUrl}/abc123/feedback`, {
-      method: "POST", headers: { "content-type": "application/json" },
-      body: JSON.stringify({ body: "Pinned", org: "other", artifactRevision: 999, anchor: { path: "body", x: 0.5, y: 0.5 } })
+
+  const app = createApp(base);
+  for (const [field, value] of Object.entries({
+    id: "client-id",
+    createdAt: "2026-07-14T12:00:00Z",
+    viewer_email: "spoofed@acme.test",
+    resolved: true,
+    org: "other",
+    artifactRevision: 999,
+    surprise: "unknown"
+  })) {
+    const response = await invokeRoute(app, "post", "/:id/feedback", {
+      params: { id: "abc123" },
+      body: { body: "Pinned", [field]: value }
     });
-    assert.equal(response.status, 200);
-  });
-  assert.equal(received.org, "acme");
-  assert.equal(received.artifactRevision, 7);
+    assert.equal(response.status, 400, field);
+    assert.equal(response.headers["cache-control"], "no-store");
+    assert.match(response.body.error, new RegExp(field, "i"));
+  }
+  assert.equal(writes, 0);
 });
 
 test("bundle feedback records a validated anchor page and exposes it on create", async () => {
@@ -598,7 +634,8 @@ test("bundle feedback records a validated anchor page and exposes it on create",
     body: { body: "Pinned on page two", anchor: { path: "body", x: 0.5, y: 0.5 }, anchor_page: "pages/two.html" }
   });
 
-  assert.equal(response.status, 200);
+  assert.equal(response.status, 201);
+  assert.equal(response.headers["cache-control"], "no-store");
   assert.equal(received.anchorPage, "pages/two.html");
   assert.equal(response.body.anchor_page, "pages/two.html");
 });
@@ -653,11 +690,17 @@ test("viewer feedback management routes scope feedback to the artifact and enfor
     deleteFeedback(id, actor) { calls.push(["delete", id, actor]); return { ok: id !== "blocked", id, reason: id === "blocked" ? "forbidden" : undefined }; },
     resolveByViewer(id, actor) { calls.push(["resolve", id, actor]); return { ok: id !== "blocked", id, reason: id === "blocked" ? "forbidden" : undefined }; }
   };
-  await serve(createApp(base), async (baseUrl) => {
-    assert.equal((await fetch(`${baseUrl}/abc123/feedback/owned`, { method: "DELETE" })).status, 200);
-    assert.equal((await fetch(`${baseUrl}/abc123/feedback/foreign`, { method: "DELETE" })).status, 404);
-    assert.equal((await fetch(`${baseUrl}/abc123/feedback/blocked/resolve`, { method: "POST" })).status, 403);
-  });
+  const app = createApp(base);
+  const deleted = await invokeRoute(app, "delete", "/:id/feedback/:fid", { params: { id: "abc123", fid: "owned" } });
+  const foreign = await invokeRoute(app, "delete", "/:id/feedback/:fid", { params: { id: "abc123", fid: "foreign" } });
+  const blocked = await invokeRoute(app, "post", "/:id/feedback/:fid/resolve", { params: { id: "abc123", fid: "blocked" } });
+
+  assert.equal(deleted.status, 200);
+  assert.equal(foreign.status, 404);
+  assert.equal(blocked.status, 403);
+  for (const response of [deleted, foreign, blocked]) {
+    assert.equal(response.headers["cache-control"], "no-store");
+  }
   assert.deepEqual(calls, [
     ["delete", "owned", { viewerEmail: "member@acme.test", isAdmin: false }],
     ["resolve", "blocked", { viewerEmail: "member@acme.test", isAdmin: false }]
