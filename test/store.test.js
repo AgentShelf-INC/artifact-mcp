@@ -78,7 +78,7 @@ test("moving an artifact re-tenants every composite-FK child atomically", () => 
 
   try {
     store.publish({ clientId: "publisher", org: "acme", html: "<h1>One</h1>", category: "Reports" });
-    store.update({ id: "moved1", clientId: "publisher", html: "<h1>Two</h1>" }); // creates a revision row
+    store.update({ id: "moved1", clientId: "publisher", org: "acme", html: "<h1>Two</h1>" }); // creates a revision row
     runtime.db.prepare("INSERT INTO feedback (id, artifact_id, org, viewer_email, body, artifact_revision) VALUES (?, ?, ?, ?, ?, ?)")
       .run("feedback1", "moved1", "acme", "viewer@acme.test", "Looks good", 2);
     runtime.db.prepare("INSERT INTO artifact_views (artifact_id, org, email) VALUES (?, ?, ?)")
@@ -153,6 +153,98 @@ test("bundle publication exposes the selected entry and linked assets atomically
   }
 });
 
+test("identical single-file and bundle updates do not create revisions or replacement bodies", () => {
+  const dataDir = mkdtempSync(path.join(tmpdir(), "artifact-store-noop-update-"));
+  const runtime = openDatabase({ dataDir });
+  const ids = ["noop01", "noop02"];
+  const store = createArtifactStore({ db: runtime.db, artifactDir: runtime.artifactDir, idFactory: () => ids.shift() });
+
+  try {
+    const html = "<h1>Unchanged</h1>";
+    const bundleFiles = { "index.html": "<h1>Index</h1>", "other.html": "<h1>Other</h1>" };
+    store.publish({ clientId: "publisher", org: "acme", html, title: "Single", description: "Same", category: "Reports" });
+    store.publishBundle({ clientId: "publisher", org: "acme", files: bundleFiles, entry: "index.html", title: "Bundle", description: "Same", category: "Reports" });
+
+    const single = store.update({
+      id: "noop01", clientId: "publisher", org: "acme", expectedRevision: 1,
+      html, title: "Single", description: "Same", category: "Reports"
+    });
+    const bundle = store.update({
+      id: "noop02", clientId: "publisher", org: "acme", expectedRevision: 1,
+      files: bundleFiles, entry: "index.html", title: "Bundle", description: "Same", category: "Reports"
+    });
+
+    assert.equal(single.revision, 1);
+    assert.equal(bundle.revision, 1);
+    assert.equal(runtime.db.prepare("SELECT COUNT(*) FROM artifact_revisions").pluck().get(), 0);
+    assert.equal(existsSync(path.join(runtime.artifactDir, ".history")), false);
+    assert.equal(store.readArtifact("noop01").html, html);
+    assert.equal(store.readBundleFile("noop02", "other.html").content.toString(), bundleFiles["other.html"]);
+    assert.deepEqual(readdirSync(runtime.artifactDir).filter((name) => name.includes(".staging-")), []);
+  } finally {
+    runtime.db.close();
+    rmSync(dataDir, { recursive: true, force: true });
+  }
+});
+
+test("changing only a bundle entry creates a revision and preserves its files", () => {
+  const dataDir = mkdtempSync(path.join(tmpdir(), "artifact-store-entry-update-"));
+  const runtime = openDatabase({ dataDir });
+  const store = createArtifactStore({ db: runtime.db, artifactDir: runtime.artifactDir, idFactory: () => "entry1" });
+
+  try {
+    const bundleFiles = { "index.html": "<h1>Index</h1>", "other.html": "<h1>Other</h1>" };
+    store.publishBundle({ clientId: "publisher", org: "acme", files: bundleFiles, entry: "index.html" });
+
+    const result = store.update({
+      id: "entry1", clientId: "publisher", org: "acme", expectedRevision: 1, entry: "other.html"
+    });
+
+    assert.equal(result.ok, true);
+    assert.equal(result.revision, 2);
+    assert.equal(result.entry, "other.html");
+    assert.equal(store.readBundleFile("entry1", "").content.toString(), bundleFiles["other.html"]);
+    assert.equal(store.readBundleFile("entry1", "index.html").content.toString(), bundleFiles["index.html"]);
+    assert.equal(store.readHistoryBundleFile("entry1", 1, "").content.toString(), bundleFiles["index.html"]);
+  } finally {
+    runtime.db.close();
+    rmSync(dataDir, { recursive: true, force: true });
+  }
+});
+
+test("updates reject the wrong tenant and a stale expected revision", () => {
+  const dataDir = mkdtempSync(path.join(tmpdir(), "artifact-store-update-guard-"));
+  const runtime = openDatabase({ dataDir });
+  const store = createArtifactStore({ db: runtime.db, artifactDir: runtime.artifactDir, idFactory: () => "guard1" });
+
+  try {
+    store.publish({ clientId: "publisher", org: "acme", html: "<h1>V1</h1>" });
+
+    assert.deepEqual(
+      store.update({ id: "guard1", clientId: "publisher", org: "beta", expectedRevision: 1, title: "Wrong tenant" }),
+      { ok: false, reason: "forbidden" }
+    );
+    assert.deepEqual(
+      store.update({ id: "guard1", clientId: "other", org: "acme", expectedRevision: 1, title: "Wrong owner" }),
+      { ok: false, reason: "forbidden" }
+    );
+
+    const updated = store.update({
+      id: "guard1", clientId: "publisher", org: "acme", expectedRevision: 1, html: "<h1>V2</h1>"
+    });
+    assert.equal(updated.revision, 2);
+    assert.deepEqual(
+      store.update({ id: "guard1", clientId: "publisher", org: "acme", expectedRevision: 1, html: "<h1>Stale</h1>" }),
+      { ok: false, reason: "conflict" }
+    );
+    assert.equal(store.getArtifactMeta("guard1").revision, 2);
+    assert.equal(store.readArtifact("guard1").html, "<h1>V2</h1>");
+  } finally {
+    runtime.db.close();
+    rmSync(dataDir, { recursive: true, force: true });
+  }
+});
+
 test("failed finalization compensates metadata and staged files", () => {
   const dataDir = mkdtempSync(path.join(tmpdir(), "artifact-store-failure-"));
   const runtime = openDatabase({ dataDir });
@@ -192,7 +284,7 @@ test("a failed in-place update reverts metadata and preserves the old body", () 
       files: { ...fs, renameSync: () => { throw new Error("simulated rename failure"); } }
     });
     assert.throws(
-      () => failing.update({ id: "upd123", clientId: "publisher", html: "<h1>V2</h1>", title: "V2" }),
+      () => failing.update({ id: "upd123", clientId: "publisher", org: "acme", html: "<h1>V2</h1>", title: "V2" }),
       /simulated rename failure/
     );
 
@@ -214,8 +306,8 @@ test("updates capture history and a past revision can be restored", () => {
 
   try {
     store.publish({ clientId: "publisher", org: "acme", html: "<h1>V1</h1>", title: "One" });
-    store.update({ id: "hist123", clientId: "publisher", html: "<h1>V2</h1>", title: "Two" });
-    store.update({ id: "hist123", clientId: "publisher", html: "<h1>V3</h1>", title: "Three" });
+    store.update({ id: "hist123", clientId: "publisher", org: "acme", html: "<h1>V2</h1>", title: "Two" });
+    store.update({ id: "hist123", clientId: "publisher", org: "acme", html: "<h1>V3</h1>", title: "Three" });
 
     // Live is revision 3; history holds the outgoing revisions 1 and 2.
     const h = store.listRevisions("hist123");
@@ -244,7 +336,7 @@ test("history is capped at maxHistory and pruned oldest-first", () => {
 
   try {
     store.publish({ clientId: "publisher", org: "acme", html: "<h1>r1</h1>" });
-    for (let i = 2; i <= 6; i++) store.update({ id: "cap123", clientId: "publisher", html: `<h1>r${i}</h1>` });
+    for (let i = 2; i <= 6; i++) store.update({ id: "cap123", clientId: "publisher", org: "acme", html: `<h1>r${i}</h1>` });
     // Live is r6; only the newest 2 outgoing revisions (5, 4) are retained.
     const revs = store.listRevisions("cap123").revisions.map((r) => r.revision);
     assert.deepEqual(revs, [5, 4]);
@@ -263,7 +355,7 @@ test("deleting an artifact removes its history rows and bodies", () => {
 
   try {
     store.publish({ clientId: "publisher", org: "acme", html: "<h1>a</h1>" });
-    store.update({ id: "del123", clientId: "publisher", html: "<h1>b</h1>" });
+    store.update({ id: "del123", clientId: "publisher", org: "acme", html: "<h1>b</h1>" });
     assert.equal(runtime.db.prepare("SELECT COUNT(*) c FROM artifact_revisions WHERE artifact_id='del123'").get().c, 1);
 
     assert.equal(store.deleteArtifactById("del123"), true);
@@ -333,7 +425,7 @@ test("audit recovers a committed same-length body by digest without snapshotting
     assert.ok(report.recoveredPaths.includes(".digest1.staging-crash"));
     assert.equal(recovered.readArtifact("digest1").html, newBody);
 
-    recovered.update({ id: "digest1", clientId: "publisher", html: "<h1>END</h1>", title: "End" });
+    recovered.update({ id: "digest1", clientId: "publisher", org: "acme", html: "<h1>END</h1>", title: "End" });
     assert.equal(recovered.readHistoryArtifact("digest1", 1), null, "crash must not snapshot the stale body");
     const recoveredHistory = recovered.readHistoryArtifact("digest1", 2);
     assert.equal(recoveredHistory.html, newBody, "next update snapshots the recovered body");
@@ -351,7 +443,7 @@ test("audit reclaims history bodies for artifacts that no longer exist", () => {
 
   try {
     store.publish({ clientId: "publisher", org: "acme", html: "<h1>a</h1>" });
-    store.update({ id: "real99", clientId: "publisher", html: "<h1>b</h1>" }); // creates .history/real99
+    store.update({ id: "real99", clientId: "publisher", org: "acme", html: "<h1>b</h1>" }); // creates .history/real99
     // Orphaned history for a since-deleted artifact (crash between DB delete and removeHistory).
     const ghost = path.join(runtime.artifactDir, ".history", "ghost77");
     fs.mkdirSync(ghost, { recursive: true });

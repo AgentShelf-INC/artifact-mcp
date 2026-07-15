@@ -39,24 +39,49 @@ test("MCP artifact events expose revision metadata through the notifier seam", a
     jsonrpc: "2.0",
     id: 200,
     method: "tools/call",
-    params: { name: "publish_artifact", arguments: { html: "<h1>Preview seam</h1>" } }
+    params: { name: "publish_artifact", arguments: { html: "<h1>Preview seam</h1>", category: "  Previews  " } }
   }, auth, { notify });
   const id = published.result.structuredContent.id;
 
+  assert.equal(published.result.structuredContent.category, "Previews");
   assert.equal(events.length, 1);
   assert.equal(events[0][0], "published");
   assert.equal(events[0][3].artifactMeta.id, id);
   assert.equal(events[0][3].artifactMeta.revision, 1);
   assert.equal(events[0][3].artifactMeta.is_bundle, 0);
 
-  await handleMcp({
+  const bundle = await handleMcp({
     jsonrpc: "2.0",
     id: 201,
     method: "tools/call",
-    params: { name: "publish_bundle", arguments: { files: { "index.html": "<h1>Bundle</h1>" } } }
+    params: { name: "publish_bundle", arguments: { files: { "index.html": "<h1>Bundle</h1>" }, category: "  Bundles  " } }
   }, auth, { notify });
+  assert.equal(bundle.result.structuredContent.category, "Bundles");
   assert.equal(events[1][0], "published");
   assert.equal(events[1][3].artifactMeta.is_bundle, 1);
+});
+
+test("update_artifact conceals existence and enforces expected revisions", async () => {
+  const published = await call("publish_artifact", { html: "<h1>Guarded</h1>" }, 210);
+  const id = published.result.structuredContent.id;
+  const updateRequest = (requestId, artifactId, requestAuth, extra = {}) => handleMcp({
+    jsonrpc: "2.0",
+    id: requestId,
+    method: "tools/call",
+    params: { name: "update_artifact", arguments: { id: artifactId, title: "Updated", ...extra } }
+  }, requestAuth);
+
+  const denied = await updateRequest(211, id, { clientId: "other", org: "acme" });
+  const missing = await updateRequest(212, "missing1", auth);
+  assert.equal(denied.result.isError, true);
+  assert.equal(missing.result.isError, true);
+  assert.equal(denied.result.content[0].text, missing.result.content[0].text);
+
+  const updated = await updateRequest(213, id, auth, { expected_revision: 1 });
+  assert.equal(updated.result.structuredContent.revision, 2);
+  const stale = await updateRequest(214, id, auth, { expected_revision: 1 });
+  assert.equal(stale.result.isError, true);
+  assert.match(stale.result.content[0].text, /changed|conflict/i);
 });
 
 test("artifact_stats exposes named audience data only to the owner or an admin", async () => {
