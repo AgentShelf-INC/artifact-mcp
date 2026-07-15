@@ -230,6 +230,9 @@ first-party placeholder. Removing `PREVIEW_RENDERER_URL` stops new rendering wit
 gallery; renderer failures use placeholders and text embeds. Set `PREVIEW_MAX_PNG_BYTES` only if you
 need to override the safe 7,500,000-byte default.
 
+Gallery cards are 16:10. The renderer defaults to `PREVIEW_VIEWPORT=1200x630` (a Discord social-card
+ratio); set `PREVIEW_VIEWPORT=1200x750` if you want thumbnails that fill the card without a crop.
+
 **Check:** a freshly generated key can publish; the artifact appears in that org's gallery section.
 
 ---
