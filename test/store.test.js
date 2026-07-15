@@ -575,3 +575,63 @@ test("storage audit recovers interrupted staging and trash moves for live metada
     rmSync(dataDir, { recursive: true, force: true });
   }
 });
+
+test("backfillBodyDigests restores blank digests from disk without bumping revision or timestamp, idempotently", () => {
+  const dataDir = mkdtempSync(path.join(tmpdir(), "artifact-store-digest-backfill-"));
+  const runtime = openDatabase({ dataDir });
+  let n = 0;
+  const store = createArtifactStore({ db: runtime.db, artifactDir: runtime.artifactDir, idFactory: () => `legacy${++n}` });
+
+  try {
+    const single = store.publish({ clientId: "publisher", org: "acme", html: "<h1>Legacy</h1>", title: "Legacy" });
+    const bundle = store.publishBundle({
+      clientId: "publisher",
+      org: "acme",
+      files: { "index.html": "<h1>Bundle</h1>", "a.css": "body{}" },
+      entry: "index.html",
+      title: "Bundle"
+    });
+    // Simulate rows created before body_sha256 existed: blank the digest on both the artifact and
+    // its current revision, and bump updated_at to a sentinel so we can prove it is preserved.
+    const blank = runtime.db.prepare("UPDATE artifacts SET body_sha256 = '', updated_at = '2000-01-01 00:00:00' WHERE id = ?");
+    blank.run(single.id);
+    blank.run(bundle.id);
+    const before = runtime.db.prepare("SELECT revision, updated_at FROM artifacts WHERE id = ?").get(single.id);
+
+    const first = store.backfillBodyDigests();
+    assert.equal(first.updated, 2);
+
+    const singleMeta = store.getArtifactMeta(single.id);
+    assert.equal(singleMeta.body_sha256, sha256("<h1>Legacy</h1>"));
+    assert.equal(store.getArtifactMeta(bundle.id).body_sha256, bundleSha256({ "index.html": "<h1>Bundle</h1>", "a.css": "body{}" }));
+    // Revision and updated_at are untouched — a digest backfill is not a content mutation.
+    assert.equal(singleMeta.revision, before.revision);
+    assert.equal(singleMeta.updated_at, "2000-01-01 00:00:00");
+
+    // Idempotent: a second pass finds nothing blank to fix.
+    assert.equal(store.backfillBodyDigests().updated, 0);
+  } finally {
+    runtime.db.close();
+    rmSync(dataDir, { recursive: true, force: true });
+  }
+});
+
+test("backfillBodyDigests skips rows whose body is missing from disk", () => {
+  const dataDir = mkdtempSync(path.join(tmpdir(), "artifact-store-digest-missing-"));
+  const runtime = openDatabase({ dataDir });
+  const store = createArtifactStore({ db: runtime.db, artifactDir: runtime.artifactDir, idFactory: () => "goneid1" });
+
+  try {
+    store.publish({ clientId: "publisher", org: "acme", html: "<h1>Gone</h1>" });
+    runtime.db.prepare("UPDATE artifacts SET body_sha256 = '' WHERE id = 'goneid1'").run();
+    rmSync(path.join(runtime.artifactDir, "goneid1.html"), { force: true });
+
+    const result = store.backfillBodyDigests();
+    assert.equal(result.scanned, 1);
+    assert.equal(result.updated, 0);
+    assert.equal(store.getArtifactMeta("goneid1").body_sha256, "");
+  } finally {
+    runtime.db.close();
+    rmSync(dataDir, { recursive: true, force: true });
+  }
+});

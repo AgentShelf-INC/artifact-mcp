@@ -836,3 +836,68 @@ test("preview notifier preserves the admin webhook test action", async () => {
   assert.equal(response.status, 200);
   assert.deepEqual(response.body, { ok: true });
 });
+
+test("thumbnail delivery is digest-bound, authenticated, and uses no-store placeholders", async () => {
+  const digest = "a".repeat(64);
+  const artifact = { id: "abc123", org: "acme", title: "Artifact", client_id: "publisher", is_bundle: 0, body_sha256: digest };
+  const image = Buffer.from("persisted png");
+  const thumbnails = {
+    readThumbnail: async (_meta, requested) => requested === digest ? image : null,
+    placeholder: (item) => Buffer.from(item.is_bundle ? "bundle placeholder" : "html placeholder"),
+    removeArtifact: async () => {}
+  };
+  const makeApp = (viewer) => createApp(dependencies({
+    artifacts: { ...dependencies().artifacts, getArtifactMeta: () => artifact },
+    resolveViewer: async () => viewer,
+    thumbnails,
+    orgs: { ...dependencies().orgs, colorMap: () => ({ acme: "#123456" }) }
+  }));
+
+  for (const viewer of [
+    { email: "member@acme.test", org: "acme", isAdmin: false },
+    { email: "admin@example.test", org: "admin", isAdmin: true }
+  ]) {
+    const response = await invokeRoute(makeApp(viewer), "get", "/thumbnails/:id", {
+      params: { id: "abc123" }, query: { v: digest }
+    });
+    assert.equal(response.status, 200);
+    assert.equal(response.headers["content-type"], "image/png");
+    assert.equal(response.headers["x-content-type-options"], "nosniff");
+    assert.equal(response.headers["cache-control"], "private, max-age=31536000, immutable");
+    assert.deepEqual(response.body, image);
+  }
+
+  const stale = await invokeRoute(makeApp({ email: "member@acme.test", org: "acme", isAdmin: false }), "get", "/thumbnails/:id", {
+    params: { id: "abc123" }, query: { v: "b".repeat(64) }
+  });
+  assert.equal(stale.headers["content-type"], "image/svg+xml; charset=utf-8");
+  assert.equal(stale.headers["cache-control"], "no-store");
+  assert.deepEqual(stale.body, Buffer.from("html placeholder"));
+
+  for (const viewer of [
+    { email: null, org: null, isAdmin: false },
+    { email: "other@example.test", org: "other", isAdmin: false }
+  ]) {
+    const concealed = await invokeRoute(makeApp(viewer), "get", "/thumbnails/:id", {
+      params: { id: "abc123" }, query: { v: digest }
+    });
+    assert.equal(concealed.status, 404);
+    assert.equal(concealed.body, "not found");
+  }
+});
+
+test("artifact deletion triggers best-effort thumbnail cleanup", async () => {
+  const removed = [];
+  const app = createApp(dependencies({
+    resolveViewer: async () => ({ email: "member@acme.test", org: "acme", isAdmin: false }),
+    thumbnails: {
+      readThumbnail: async () => null,
+      placeholder: () => Buffer.from("placeholder"),
+      removeArtifact: async (id) => { removed.push(id); }
+    }
+  }));
+  const response = await invokeRoute(app, "delete", "/:id", { params: { id: "abc123" } });
+  assert.equal(response.status, 200);
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.deepEqual(removed, ["abc123"]);
+});

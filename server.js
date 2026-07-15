@@ -20,7 +20,8 @@ import { addFeedback, listForArtifact as feedbackForArtifact, getFeedback, delet
 import * as webhooks from "./lib/webhooks.js";
 import * as notify from "./lib/notify.js";
 import * as notifications from "./lib/notifications.js";
-import { createArtifactPreviewNotifier } from "./lib/preview.js";
+import { createArtifactPreviewNotifier, createPreviewRenderer } from "./lib/preview.js";
+import { createThumbnailQueue, createThumbnailStore } from "./lib/thumbnails.js";
 
 const PORT = Number(process.env.PORT || 3480);
 const PUBLIC_BASE = process.env.PUBLIC_BASE_URL || "http://localhost:3480";
@@ -118,13 +119,61 @@ if (storageReport.missingBodies.length || storageReport.orphanBodies.length) {
   );
 }
 
-const artifactNotifier = createArtifactPreviewNotifier({ artifacts: artifactStore, notify });
+// Older artifacts predate the body_sha256 column and carry a blank digest. Backfill their
+// content digests so they get stable thumbnail URLs instead of a permanent placeholder.
+const digestBackfill = artifactStore.backfillBodyDigests();
+if (digestBackfill.updated) {
+  console.log(`[artifact-mcp] backfilled content digest for ${digestBackfill.updated} artifact(s)`);
+}
+
+const previewRenderer = createPreviewRenderer();
+const thumbnails = createThumbnailStore({ renderer: previewRenderer });
+const thumbnailQueue = createThumbnailQueue({ thumbnails });
+// The audit is best-effort cleanup and must never block core startup: a read-only or
+// unwritable previews path degrades thumbnails, it does not take the service down.
+try {
+  const thumbnailAudit = await thumbnails.audit(artifactStore);
+  if (thumbnailAudit.orphanDirs.length || thumbnailAudit.partialFiles.length || thumbnailAudit.invalidFiles.length) {
+    console.log(
+      `[artifact-mcp] thumbnail audit removed ${thumbnailAudit.orphanDirs.length} orphan path(s), ` +
+      `${thumbnailAudit.partialFiles.length} stale/partial file(s), ${thumbnailAudit.invalidFiles.length} invalid PNG(s)`
+    );
+  }
+} catch (error) {
+  console.warn(`[artifact-mcp] thumbnail audit skipped: ${String(error?.message || error)}`);
+}
+
+const artifactNotifier = createArtifactPreviewNotifier({ artifacts: artifactStore, notify, thumbnails, thumbnailQueue });
+
+// Queue existing single-file artifacts at low priority. The serial worker starts on a
+// microtask and mutation events are always selected before remaining backfill jobs.
+if (thumbnails.enabled) {
+  void (async () => {
+    for (const items of artifactStore.listAllGroupedByOrg({ includeHidden: true }).values()) {
+      for (const meta of items) {
+        if (!meta.is_bundle && meta.body_sha256 && !await thumbnails.readThumbnail(meta)) {
+          // Await each low-priority job before admitting the next one: the backfill queue is
+          // bounded to one pending artifact while high-priority mutation jobs can jump ahead.
+          // Re-read the body at execution AND confirm the digest is still current: a concurrent
+          // update between enqueue and run would otherwise pair this stale digest with newer HTML
+          // and overwrite/delete the authoritative thumbnail. Returning undefined skips the job.
+          await thumbnailQueue.enqueue(meta, () => {
+            const current = artifactStore.getArtifactMeta(meta.id);
+            if (!current || current.body_sha256 !== meta.body_sha256) return undefined;
+            return artifactStore.readArtifact(meta.id)?.html;
+          }, { priority: "low" });
+        }
+      }
+    }
+  })().catch((error) => console.warn(`[artifact-mcp] thumbnail backfill stopped: ${String(error?.message || error)}`));
+}
 
 const app = createApp({
   checkPublisherKey: checkKey,
   handleMcp: (payload, auth) => handleMcp(payload, auth, { notify: artifactNotifier.emit }),
   resolveViewer,
   artifacts: artifactStore,
+  thumbnails,
   shares,
   keys: { list: listKeys, create: createKey, revoke: revokeKey },
   orgs: {

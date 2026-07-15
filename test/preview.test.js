@@ -1,6 +1,9 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { createArtifactPreviewNotifier, createPreviewRenderer, renderPreview } from "../lib/preview.js";
+import { PNG_SIGNATURE } from "../lib/thumbnails.js";
+
+const makePng = (value = "data") => Buffer.concat([PNG_SIGNATURE, Buffer.from(value)]);
 
 test("renderPreview is a no-op when PREVIEW_RENDERER_URL is unset", async () => {
   const before = process.env.PREVIEW_RENDERER_URL;
@@ -19,12 +22,12 @@ test("preview renderer posts HTML and returns PNG bytes", async () => {
     rendererUrl: "http://artifact-preview:3000",
     fetchImpl: async (url, init) => {
       calls.push({ url, init });
-      return new Response(Buffer.from("png-data"), { status: 200, headers: { "content-type": "image/png" } });
+      return new Response(makePng(), { status: 200, headers: { "content-type": "image/png" } });
     }
   });
 
   const png = await renderer.renderPreview("<h1>Preview</h1>");
-  assert.deepEqual(png, Buffer.from("png-data"));
+  assert.deepEqual(png, makePng());
   assert.equal(calls[0].url, "http://artifact-preview:3000/render");
   assert.deepEqual(JSON.parse(calls[0].init.body), { html: "<h1>Preview</h1>", width: 1200, height: 630 });
   assert.deepEqual(calls[0].init.headers, { "content-type": "application/json" });
@@ -57,7 +60,7 @@ test("per-revision preview cache coalesces in-flight and repeated renders", asyn
     fetchImpl: async () => {
       calls += 1;
       await new Promise((resolve) => { release = resolve; });
-      return new Response(Buffer.from(`png-${calls}`), { headers: { "content-type": "image/png" } });
+      return new Response(makePng(String(calls)), { headers: { "content-type": "image/png" } });
     }
   });
 
@@ -66,16 +69,16 @@ test("per-revision preview cache coalesces in-flight and repeated renders", asyn
   await new Promise((resolve) => setImmediate(resolve));
   assert.equal(calls, 1);
   release();
-  assert.deepEqual(await first, Buffer.from("png-1"));
-  assert.deepEqual(await duplicate, Buffer.from("png-1"));
-  assert.deepEqual(await renderer.renderRevisionPreview("artifact-1", 3, "ignored after cache"), Buffer.from("png-1"));
+  assert.deepEqual(await first, makePng("1"));
+  assert.deepEqual(await duplicate, makePng("1"));
+  assert.deepEqual(await renderer.renderRevisionPreview("artifact-1", 3, "ignored after cache"), makePng("1"));
   assert.equal(calls, 1);
 
   const nextRevision = renderer.renderRevisionPreview("artifact-1", 4, "<h1>two</h1>");
   await new Promise((resolve) => setImmediate(resolve));
   assert.equal(calls, 2);
   release();
-  assert.deepEqual(await nextRevision, Buffer.from("png-2"));
+  assert.deepEqual(await nextRevision, makePng("2"));
 });
 
 test("artifact preview notifier skips bundles and detaches single-file rendering", async () => {
@@ -142,4 +145,19 @@ test("artifact preview notifier falls back to text when rendering fails", async 
   await new Promise((resolve) => setImmediate(resolve));
   assert.equal(delivered.length, 1);
   assert.equal(delivered[0][3].preview, null);
+});
+
+test("artifact preview notifier performs best-effort MCP delete cleanup", async () => {
+  const removed = [];
+  const delivered = [];
+  const notifier = createArtifactPreviewNotifier({
+    artifacts: {},
+    thumbnails: { removeArtifact: async (id) => { removed.push(id); } },
+    renderer: { enabled: false },
+    notify: { emit: (...args) => delivered.push(args) }
+  });
+  notifier.emit("deleted", "acme", { title: "Gone" }, { artifactMeta: { id: "abc123" } });
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.deepEqual(removed, ["abc123"]);
+  assert.equal(delivered.length, 1);
 });

@@ -38,7 +38,7 @@ umbrella). Both light and dark themes ship; light shown here.*
 | Org-scoped gallery | Viewer shell + feedback threads |
 |---|---|
 | [![gallery](docs/screenshots/01-gallery-light.png)](docs/screenshots/01-gallery-light.png) | [![feedback](docs/screenshots/05-feedback-light.png)](docs/screenshots/05-feedback-light.png) |
-| Per-org sections and categories, live artifact previews, colored org filters. | Sandboxed artifact with anchored, threaded viewer feedback (resolve / delete / reply). |
+| Per-org sections and categories, static artifact thumbnails, colored org filters. | Sandboxed artifact with anchored, threaded viewer feedback (resolve / delete / reply). |
 
 | Version history | Public share link |
 |---|---|
@@ -106,9 +106,10 @@ umbrella). Both light and dark themes ship; light shown here.*
   host, masked in every UI/API response, and encrypted at rest with `WEBHOOK_ENC_KEY`. The
   documented no-key mode preserves zero-config with a loud plaintext-storage warning. Delivery is
   fire-and-forget (never blocks a request). Test button.
-- **Optional preview thumbnails** — single-file `published`, `updated`, and `restored` events can
-  attach a rendered PNG. This is off by default and uses a separate Playwright sidecar, so the core
-  image has no browser dependency. Bundles and feedback/resolved/deleted events remain text-only.
+- **Optional persistent thumbnails** — gallery cards use authenticated static images, never live
+  preview iframes. A single-file `published`, `updated`, or `restored` event renders one PNG that is
+  persisted by content digest and reused by Discord. This is off by default and uses a separate
+  Playwright sidecar, so the core image has no browser dependency. Bundles use a static placeholder.
 
 ### Operate
 - **Settings (admin)** — manage orgs / domains / categories / webhooks, and generate/revoke
@@ -197,6 +198,7 @@ Two access surfaces, deliberately split:
 | `POST /mcp` | MCP JSON-RPC (upload), API-key auth |
 | `GET /` | org-scoped gallery (admin: all orgs, incl. empty ones as drop targets) |
 | `GET /:id` | viewer shell (chrome + sandboxed iframe) |
+| `GET /thumbnails/:id?v=<body_sha256>` | authenticated current-revision thumbnail or no-store placeholder |
 | `GET /raw/:id` · `GET /raw/:id/*` | raw single-file / bundle serving (path-traversal guarded); `?anchor=1` injects the comment bridge, `?download` forces attachment |
 | `GET /raw/:id/rev/:n[/*]` | serve a past revision's body |
 | `GET /s/:token` · `GET /s/:token/*` | public read-only share delivery for a valid active token |
@@ -229,8 +231,9 @@ For domain language, invariants, module seams, and workflows, see [`CONTEXT.md`]
 |---|---|
 | `ARTIFACT_API_KEYS` | Bootstrap keys, `clientId:org:secret` comma-separated (DB is authoritative after first boot) |
 | `WEBHOOK_ENC_KEY` | Optional 32-byte base64 AES-256-GCM key for Discord webhook URLs; unset preserves plaintext fallback with a startup warning |
-| `PREVIEW_RENDERER_URL` | Optional internal renderer base URL; unset keeps Discord embeds byte-for-byte text-only |
+| `PREVIEW_RENDERER_URL` | Optional internal renderer base URL; unset keeps gallery placeholders and Discord text-only |
 | `PREVIEW_RENDER_TIMEOUT_MS` / `PREVIEW_VIEWPORT` | Optional renderer timeout (default `8000`) and social-card crop (default `1200x630`) |
+| `PREVIEW_MAX_PNG_BYTES` | Maximum accepted renderer response and persisted PNG size (default `7500000`) |
 | `PUBLIC_BASE_URL` | Public deployment URL used for generated links; defaults to `http://localhost:3480` |
 | `APP_NAME` / `APP_BRAND` | Portal display name and compact brand mark; defaults to `Artifact Index` / `A` |
 | `ORG_EMAIL_DOMAINS` | Optional `domain:org` seeds — the registry (managed in Settings) is authoritative; default: the email domain **is** the org |
@@ -264,7 +267,7 @@ Encrypted rows cannot be opened with a replacement key, so do not simply overwri
 
 This procedure has a brief notification outage but never writes decrypted URLs back to SQLite.
 
-### Optional: Discord preview thumbnails
+### Optional: persistent gallery and Discord thumbnails
 
 Add this to `.env`:
 
@@ -279,10 +282,20 @@ docker compose --profile preview up -d --build
 docker compose exec artifact-preview npm run smoke
 ```
 
-The sidecar renders attacker-controlled HTML. Keep the shipped internal-only network, resource
-limits, non-root Chromium sandbox, and browser request blocking intact. Do not publish its port,
+The sidecar renders attacker-controlled HTML. Its isolation boundary is the **container itself**:
+a non-root user, read-only root filesystem, dropped Linux capabilities, `no-new-privileges`, a
+seccomp profile, an internal-only network, resource limits, and browser request blocking. Chromium's
+own in-process sandbox is disabled (`chromiumSandbox: false`) because it requires `CAP_SYS_CHROOT`/user
+namespaces that this hardened container deliberately removes; the container confinement above is the
+compensating control. Keep all of it intact. Do not publish its port,
 attach it to the tunnel, mount host/app data, or give it secrets. If it is absent, slow, or errors,
-notifications automatically fall back to the existing text embed without blocking publication.
+notifications automatically fall back to the existing text embed and gallery cards use a stable
+first-party placeholder without blocking publication. Valid PNGs live under
+`DATA_DIR/previews/<artifact-id>/<body_sha256>.png`; include this directory in normal data-volume
+capacity planning and backups. Startup removes orphan/partial previews and serially backfills
+existing single-file artifacts at low priority. Updates retire older digest files after the new PNG
+is installed. Bundles remain placeholder-only in v1. Removing the sidecar prevents new renders but
+does not break the gallery or remove already-persisted current thumbnails.
 
 ## Quick start
 

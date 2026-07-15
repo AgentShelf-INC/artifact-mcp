@@ -72,25 +72,31 @@ test("bundle shell scopes anchors to the current page and resets bridge state on
   assert.match(html, /anchor_page:anchor&&anchor\.page/);
 });
 
-test("preview and viewer iframes are cache-busted by artifact content version", () => {
-  const sha = "deadbeefcafebabe0011";
+test("gallery cards use static digest-addressed images while the viewer iframe stays live", () => {
+  const sha = "deadbeefcafebabe00112233445566778899aabbccddeeff0011223344556677";
   const item = { id: "abc123", org: "acme", title: "Artifact", client_id: "owner", uploader_label: "", is_bundle: 0, revision: 5, body_sha256: sha, bytes: 1, category: "" };
   const gallery = renderGallery({ email: "v@acme.test", org: "acme", isAdmin: false }, [{ org: "acme", items: [item] }]);
-  // preview src carries the body digest (first 12 chars), so a revised body yields a new URL
-  assert.match(gallery, /src="\/raw\/abc123\?preview&v=deadbeefcafe"/);
+  assert.match(gallery, /<img class="pv" src="\/thumbnails\/abc123\?v=deadbeefcafebabe00112233445566778899aabbccddeeff0011223344556677" loading="lazy" decoding="async" width="1200" height="750"/);
+  assert.doesNotMatch(gallery, /<iframe class="pv"/);
+  assert.doesNotMatch(gallery, /\?preview/);
 
   // digest, not revision, drives the token when body_sha256 is present
   const shell = renderArtifactShell({ ...item }, nav, {}, []);
   assert.match(shell, /\/raw\/abc123\?anchor=1&v=deadbeefcafe/);
 
   // a changed body digest changes the token (cache is actually busted)
-  const gallery2 = renderGallery({ email: "v@acme.test", org: "acme", isAdmin: false }, [{ org: "acme", items: [{ ...item, body_sha256: "0000000000001111" }] }]);
-  assert.match(gallery2, /\?preview&v=000000000000"/);
-  assert.doesNotMatch(gallery2, /v=deadbeefcafe/);
+  const nextSha = "000000000000111122223333444455556666777788889999aaaabbbbccccdddd";
+  const gallery2 = renderGallery({ email: "v@acme.test", org: "acme", isAdmin: false }, [{ org: "acme", items: [{ ...item, body_sha256: nextSha }] }]);
+  assert.ok(gallery2.includes(`?v=${nextSha}`));
+  assert.doesNotMatch(gallery2, /v=deadbeef/);
 
-  // falls back to revision when no digest yet (pre-PBI-022 rows), and omits the param when neither exists
+  // Missing legacy digests use the no-store placeholder route rather than a live iframe.
   const noDigest = renderGallery({ email: "v@acme.test", org: "acme", isAdmin: false }, [{ org: "acme", items: [{ ...item, body_sha256: null }] }]);
-  assert.match(noDigest, /\?preview&v=5"/);
-  const noVersion = renderGallery({ email: "v@acme.test", org: "acme", isAdmin: false }, [{ org: "acme", items: [{ ...item, body_sha256: null, revision: null }] }]);
-  assert.match(noVersion, /src="\/raw\/abc123\?preview"/);
+  assert.match(noDigest, /src="\/thumbnails\/abc123"/);
+  assert.doesNotMatch(noDigest, /<iframe class="pv"/);
+
+  const bundle = renderGallery({ email: "v@acme.test", org: "acme", isAdmin: false }, [{ org: "acme", items: [{ ...item, is_bundle: 1 }] }]);
+  assert.match(bundle, /src="\/thumbnails\/abc123\?v=/);
+  assert.match(bundle, />Bundle<\/span>/);
+  assert.doesNotMatch(bundle, /<iframe class="pv"/);
 });

@@ -8,7 +8,10 @@ process.once("message", async ({ html, width, height, timeoutMs }) => {
   let context;
   let png;
   try {
-    browser = await chromium.launch({ chromiumSandbox: true, timeout: timeoutMs });
+    // The container is the isolation boundary (network-isolated, read-only, non-root, cap_drop ALL,
+    // seccomp, resource-limited). Chromium's in-process sandbox needs CAP_SYS_CHROOT / user
+    // namespaces, which the hardened compose deliberately removes, so run without it here.
+    browser = await chromium.launch({ chromiumSandbox: false, timeout: timeoutMs });
     context = await browser.newContext({
       viewport: { width, height },
       deviceScaleFactor: 2,
