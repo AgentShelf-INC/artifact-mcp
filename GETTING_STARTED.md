@@ -50,6 +50,7 @@ Open `.env`. The only value you must set to boot is a bootstrap publishing key.
 | `WEBHOOK_ENC_KEY` | recommended | A 32-byte base64 key that encrypts Discord webhook URLs in SQLite with AES-256-GCM. If omitted, webhooks remain zero-config but are stored in plaintext and startup warns loudly. |
 | `PREVIEW_RENDERER_URL` | optional | Enables Discord PNG previews for single-file publish/update/restore events. Leave unset for the default text-only behavior. |
 | `PUBLIC_BASE_URL` | prod | Your real `https://artifact.your-domain`. Defaults to `http://localhost:3480`. Used to build share URLs. |
+| `APP_NAME` / `APP_BRAND` | optional | Portal display name and compact mark. Defaults to `Artifact Index` / `A`. |
 | `ADMIN_EMAILS` | prod | Comma-separated emails that see every org (the admin gallery). |
 | `CF_ACCESS_TEAM_DOMAIN` + `CF_ACCESS_AUD` | prod | Turns on Access JWT verification. Set both in Phase 4. |
 | `TRUST_ACCESS_HEADERS` | dev only | `1` trusts an unverified identity header — **loopback development only**, never on a reachable origin. |
@@ -125,26 +126,50 @@ Create a Cloudflare Tunnel and route a public hostname (e.g. `artifact.your-doma
 artifact-mcp origin. See Phase 4d for the exact origin URL — prefer the container name over a host
 IP.
 
-### 4b. Access applications (order matters — most specific first)
+### 4b. Bootstrap the catch-all Access application
+
+Do this before enabling strict runtime startup. Cloudflare assigns the Application Audience (AUD)
+only after an app exists, while artifact-mcp reads the AUD when its identity module is imported.
+
+Create a least-privilege API token, then run the setup command from the repo root:
+
+```bash
+export CF_API_TOKEN=REPLACE_WITH_A_LEAST_PRIVILEGE_TOKEN
+export CF_ACCOUNT_ID=REPLACE_WITH_ACCOUNT_ID
+export PUBLIC_BASE_URL=https://artifact.your-domain
+export CF_ACCESS_IDP_ID=REPLACE_WITH_YOUR_ONE_IDP_ID
+
+node scripts/cf-access-setup.mjs          # dry-run
+node scripts/cf-access-setup.mjs --apply  # explicit mutation
+```
+
+The command finds or creates the catch-all app, configures one allowed IdP with automatic redirect,
+and prints `CF_ACCESS_AUD=...` plus `CF_ACCESS_TEAM_DOMAIN=...`. It never writes `.env` and never
+creates or edits Access policies. Optional account-wide login branding and a defense-in-depth
+Email Obfuscation Configuration Rule are documented in
+[`docs/DEPLOY-CLOUDFLARE.md`](docs/DEPLOY-CLOUDFLARE.md).
+
+### 4c. Create policies, then turn on JWT verification
+
+In Zero Trust, create or verify these applications and policies in precedence order:
 
 1. **`/mcp`** → policy **Bypass → Everyone**. Agents authenticate with the API key, not SSO.
-2. **`/s/*`** → policy **Bypass → Everyone**. Required for public share links: the app validates the
-   opaque token itself. This cannot be done from application code.
-3. **Catch-all `/`** → policy **Allow** your viewer email domains + admin email(s).
+2. **`/s/*`** → policy **Bypass → Everyone**. The app validates the opaque share token. Application
+   code cannot make an Access-gated route public.
+3. The setup-created **catch-all** app → policy **Allow** your viewer domains and admin email(s).
 
-### 4c. Turn on JWT verification
+Copy the emitted values into `.env` and enable strict mode:
 
-From the **catch-all** Access app, copy its **Application Audience (AUD)** tag. Then in `.env`:
-```
+```dotenv
 CF_ACCESS_TEAM_DOMAIN=yourteam.cloudflareaccess.com
-CF_ACCESS_AUD=<the-catch-all-AUD-tag>
+CF_ACCESS_AUD=REPLACE_WITH_THE_EMITTED_AUD
 PUBLIC_BASE_URL=https://artifact.your-domain
 ADMIN_EMAILS=you@your-domain
+REQUIRE_ACCESS_JWT=1
 ```
-Optionally add `REQUIRE_ACCESS_JWT=1` so a misconfigured deploy fails loudly instead of serving.
 
-Rebuild: `docker compose up -d --build`. The boot log must now read
-`Access identity: JWT-verified`.
+Fully restart the process: `docker compose up -d --build`. A hot env-file edit is not enough. The
+boot log must now read `Access identity: JWT-verified`.
 
 ### 4d. Don't publish the origin on the LAN
 
@@ -222,11 +247,13 @@ identity.
 
 | Symptom | Likely cause | Fix |
 |---|---|---|
-| Gallery shows "Not signed in" after login | JWT vars unset → mode `disabled`, or a cached 403 | Set `CF_ACCESS_*` and rebuild; hard-refresh once. |
+| Gallery shows "Not signed in" after login | JWT vars unset/incorrect, or the one-shot post-auth retry also failed | Run setup first, set the emitted `CF_ACCESS_*`, fully restart, then retry sign-in. |
 | Boot log says `HEADER-TRUST` in production | `TRUST_ACCESS_HEADERS=1` left in `.env` | Remove it; set the JWT vars. |
 | `/mcp` returns 401 | Missing/wrong `Authorization: Bearer <key>` | Use a valid, non-revoked key for that org. |
 | Share link 404s | Expired, revoked, unknown token, or `/s/*` Access app missing/not Bypass | Recreate the link; confirm the `/s/*` Bypass app exists. |
 | Server won't start, logs `REQUIRE_ACCESS_JWT` | Strict mode on without JWT vars | Set both JWT vars, or drop `REQUIRE_ACCESS_JWT`. |
+| Hundreds of blocked `email-decode.min.js` scripts | An old response lacks the origin `no-transform` directive | Confirm `Cache-Control` contains `no-transform`; see the Cloudflare deployment runbook. |
+| Access shows a redundant method picker | Catch-all app has several allowed IdPs or auto-redirect is off | Rerun `cf-access-setup.mjs` and apply the proposed app update. |
 | Site down right after loopback bind | Tunnel still targets a host IP | Point the tunnel origin at `http://artifact-mcp:3480` on the shared network (Phase 4d). |
 | MCP client doesn't see new tools | Clients cache `tools/list` at connect | Reconnect the integration after a server update. |
 

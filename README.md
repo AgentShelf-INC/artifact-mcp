@@ -4,7 +4,7 @@
 > data, your rules.**
 
 [![License: Apache 2.0](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
-[![CI](https://github.com/AgentShelf-INC/artifact-mcp/actions/workflows/ci.yml/badge.svg)](https://github.com/AgentShelf-INC/artifact-mcp/actions/workflows/ci.yml)
+![CI](https://img.shields.io/badge/CI-node--test-2088FF.svg)
 ![MCP server](https://img.shields.io/badge/MCP-server-6E56CF.svg)
 
 Your agents already generate HTML — dashboards, reports, one-pagers, whole mini-sites.
@@ -231,6 +231,8 @@ For domain language, invariants, module seams, and workflows, see [`CONTEXT.md`]
 | `WEBHOOK_ENC_KEY` | Optional 32-byte base64 AES-256-GCM key for Discord webhook URLs; unset preserves plaintext fallback with a startup warning |
 | `PREVIEW_RENDERER_URL` | Optional internal renderer base URL; unset keeps Discord embeds byte-for-byte text-only |
 | `PREVIEW_RENDER_TIMEOUT_MS` / `PREVIEW_VIEWPORT` | Optional renderer timeout (default `8000`) and social-card crop (default `1200x630`) |
+| `PUBLIC_BASE_URL` | Public deployment URL used for generated links; defaults to `http://localhost:3480` |
+| `APP_NAME` / `APP_BRAND` | Portal display name and compact brand mark; defaults to `Artifact Index` / `A` |
 | `ORG_EMAIL_DOMAINS` | Optional `domain:org` seeds — the registry (managed in Settings) is authoritative; default: the email domain **is** the org |
 | `ADMIN_EMAILS` / `ADMIN_EMAIL_DOMAINS` | Who sees every org |
 | `CF_ACCESS_TEAM_DOMAIN` + `CF_ACCESS_AUD` | Enable Access JWT verification (production) |
@@ -289,7 +291,7 @@ then the full Cloudflare Tunnel + Access production deploy — with a verificati
 step (and written so an AI agent can drive it).
 
 ```bash
-cp .env.example .env      # set ARTIFACT_API_KEYS and (prod) CF_ACCESS_* vars
+cp .env.example .env      # set ARTIFACT_API_KEYS; add prod CF_ACCESS_* after Access bootstrap
 docker compose up -d --build
 ```
 
@@ -303,14 +305,22 @@ curl -H "Authorization: Bearer $KEY" -H 'content-type: application/json' \
 
 ## Cloudflare setup (production)
 
-1. **Tunnel** public hostname `artifact.your-domain` → the artifact-mcp origin.
-2. **Access app** #1 on path `/mcp` → policy **Bypass → Everyone** (agents auth by key).
-3. **Access app** #2 on path `/s/*` → policy **Bypass → Everyone**. This is required for public
-   share links: the application validates the opaque share token itself. It cannot be configured
-   from application code.
-4. **Access app** #3 catch-all → **Allow** your viewer email domains + admin email.
-5. Copy the catch-all app's **AUD** → set `CF_ACCESS_AUD` + `CF_ACCESS_TEAM_DOMAIN`, rebuild
-   → viewer identity is now JWT-verified.
+Bootstrap the Access app before strict runtime startup: Cloudflare does not assign its AUD until
+the app exists, while artifact-mcp reads that AUD during module initialization.
+
+1. Configure the Tunnel/public hostname and private origin path.
+2. Export the setup-only `CF_API_TOKEN`, `CF_ACCOUNT_ID`, `PUBLIC_BASE_URL`, and
+   `CF_ACCESS_IDP_ID`; preview with `node scripts/cf-access-setup.mjs`, then run it with `--apply`.
+3. Create or verify the operator-owned policies: `/mcp` **Bypass → Everyone**, `/s/*`
+   **Bypass → Everyone**, and catch-all **Allow** for intended viewers. The script never changes
+   policies.
+4. Put the emitted `CF_ACCESS_AUD` and `CF_ACCESS_TEAM_DOMAIN` in the runtime environment with
+   `REQUIRE_ACCESS_JWT=1`, then fully restart artifact-mcp.
+
+Optional `CF_ACCESS_LOGIN_*` values update the account-wide reusable Access Custom Page for every
+Access application; they do not configure a per-app `logo_url`. See
+[`docs/DEPLOY-CLOUDFLARE.md`](docs/DEPLOY-CLOUDFLARE.md) for inputs, least-privilege permissions,
+the exact bootstrap sequence, policy requirements, and troubleshooting.
 
 ### Network exposure
 

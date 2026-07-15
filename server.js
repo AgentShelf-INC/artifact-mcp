@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2026 Neil Blackman
 import { accessSync, constants } from "node:fs";
+import { createServer } from "node:http";
 import { createApp } from "./lib/app.js";
 import { MCP_JSON_LIMIT } from "./lib/config.js";
 import db, { ARTIFACT_DIR, seedKeysFromEnv } from "./lib/db.js";
@@ -8,7 +9,7 @@ import { sha256Hex, checkKey } from "./lib/auth.js";
 import { handleMcp } from "./lib/mcp.js";
 import * as artifactStore from "./lib/store.js";
 import { ACCESS_IDENTITY_MODE, assertReady, resolveViewer } from "./lib/identity.js";
-import { renderGallery, renderArtifactShell, notFoundPage, notSignedInPage } from "./lib/portal.js";
+import { accessSessionRetryPage, renderGallery, renderArtifactShell, notFoundPage, notSignedInPage } from "./lib/portal.js";
 import { renderSettings } from "./lib/settings.js";
 import { listKeys, createKey, revokeKey } from "./lib/keys.js";
 import * as orgs from "./lib/orgs.js";
@@ -23,6 +24,65 @@ import { createArtifactPreviewNotifier } from "./lib/preview.js";
 
 const PORT = Number(process.env.PORT || 3480);
 const PUBLIC_BASE = process.env.PUBLIC_BASE_URL || "http://localhost:3480";
+const ACCESS_RETRY_PARAM = "cf_access_retry";
+
+function withNoTransform(value) {
+  const current = Array.isArray(value) ? value.join(", ") : String(value || "");
+  const directives = current.split(",").map((part) => part.trim().toLowerCase());
+  return directives.includes("no-transform") ? current : current ? `${current}, no-transform` : "no-transform";
+}
+
+function preventResponseTransforms(res) {
+  const setHeader = res.setHeader;
+  res.setHeader = function setNoTransformHeader(name, value) {
+    const next = String(name).toLowerCase() === "cache-control" ? withNoTransform(value) : value;
+    return setHeader.call(this, name, next);
+  };
+  res.setHeader("cache-control", "no-transform");
+
+  // Node permits writeHead(..., headers) to bypass setHeader. Express currently uses
+  // setHeader, but normalize the direct form too so this boundary cannot be skipped.
+  const writeHead = res.writeHead;
+  res.writeHead = function writeNoTransformHead(statusCode, statusMessage, headers) {
+    const headerBag = typeof statusMessage === "object" && statusMessage !== null
+      ? statusMessage
+      : headers;
+    if (Array.isArray(headerBag)) {
+      for (let i = 0; i < headerBag.length - 1; i += 2) {
+        if (String(headerBag[i]).toLowerCase() === "cache-control") {
+          headerBag[i + 1] = withNoTransform(headerBag[i + 1]);
+        }
+      }
+    } else if (headerBag && typeof headerBag === "object") {
+      const key = Object.keys(headerBag).find((name) => name.toLowerCase() === "cache-control");
+      if (key) headerBag[key] = withNoTransform(headerBag[key]);
+    }
+    return writeHead.apply(this, arguments);
+  };
+}
+
+function hasAccessSessionCookie(req) {
+  const values = Array.isArray(req.headers.cookie) ? req.headers.cookie : [req.headers.cookie];
+  return values.filter(Boolean).some((value) => String(value).split(";").some((part) => {
+    const separator = part.indexOf("=");
+    return separator >= 0 && part.slice(0, separator).trim() === "CF_Authorization" &&
+      part.slice(separator + 1).trim().length > 0;
+  }));
+}
+
+function accessRetryTarget(req) {
+  if (ACCESS_IDENTITY_MODE !== "jwt" || req.method !== "GET" || !hasAccessSessionCookie(req)) return null;
+  const assertion = req.headers["cf-access-jwt-assertion"];
+  if (Array.isArray(assertion) ? assertion.some(Boolean) : assertion) return null;
+  try {
+    const url = new URL(req.url || "/", "http://artifact-mcp.local");
+    if (url.pathname !== "/" || url.searchParams.has(ACCESS_RETRY_PARAM)) return null;
+    url.searchParams.set(ACCESS_RETRY_PARAM, "1");
+    return `${url.pathname}${url.search}`;
+  } catch {
+    return null;
+  }
+}
 
 assertReady();
 const seededKeys = seedKeysFromEnv(sha256Hex);
@@ -99,4 +159,21 @@ const app = createApp({
 });
 
 const LISTEN_HOST = process.env.LISTEN_HOST || "0.0.0.0";
-app.listen(PORT, LISTEN_HOST, () => console.log(`[artifact-mcp] listening on ${LISTEN_HOST}:${PORT}`));
+const server = createServer((req, res) => {
+  // Cloudflare honors Cache-Control: no-transform for Email Address Obfuscation.
+  // Applying it at the listener boundary preserves every body and every route's
+  // existing no-store/private cache semantics without relying on route coverage.
+  preventResponseTransforms(res);
+  const retryTarget = accessRetryTarget(req);
+  if (retryTarget) {
+    res.statusCode = 200;
+    res.setHeader("content-type", "text/html; charset=utf-8");
+    res.setHeader("cache-control", "no-store");
+    res.setHeader("x-content-type-options", "nosniff");
+    res.setHeader("referrer-policy", "no-referrer");
+    res.end(accessSessionRetryPage(retryTarget));
+    return;
+  }
+  app(req, res);
+});
+server.listen(PORT, LISTEN_HOST, () => console.log(`[artifact-mcp] listening on ${LISTEN_HOST}:${PORT}`));

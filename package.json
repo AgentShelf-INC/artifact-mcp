@@ -5,14 +5,6 @@
   "description": "Self-hostable MCP server for publishing agent-made HTML artifacts to your own domain, with multi-org tenancy",
   "license": "Apache-2.0",
   "author": "Neil Blackman",
-  "homepage": "https://github.com/AgentShelf-INC/artifact-mcp#readme",
-  "repository": {
-    "type": "git",
-    "url": "git+https://github.com/AgentShelf-INC/artifact-mcp.git"
-  },
-  "bugs": {
-    "url": "https://github.com/AgentShelf-INC/artifact-mcp/issues"
-  },
   "keywords": [
     "mcp",
     "model-context-protocol",
@@ -25,6 +17,7 @@
   "scripts": {
     "start": "node server.js",
     "dev": "LISTEN_HOST=127.0.0.1 TRUST_ACCESS_HEADERS=1 DATA_DIR=.devdata node --env-file-if-exists=.env server.js",
+    "cf-access:setup": "node scripts/cf-access-setup.mjs",
     "test": "node --test --test-concurrency=1"
   },
   "dependencies": {
