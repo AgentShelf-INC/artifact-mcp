@@ -1,6 +1,37 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { runInNewContext } from "node:vm";
 import { rawArtifactHeaders, injectAnchorBridge, ANCHOR_BRIDGE_MARKER, ANCHOR_BRIDGE } from "../lib/artifact-http.js";
+
+function anchorBridgeHarness({ querySelector, width = 1000, height = 1000 }) {
+  const listeners = new Map();
+  const messages = [];
+  const parent = { postMessage(message) { messages.push(message); } };
+  const document = {
+    documentElement: { scrollWidth: width, clientWidth: width, scrollHeight: height, clientHeight: height },
+    body: { scrollWidth: width, clientWidth: width, scrollHeight: height, clientHeight: height },
+    querySelector,
+    addEventListener(type, listener) { listeners.set(type, listener); },
+    removeEventListener() {}
+  };
+  const window = {
+    parent,
+    location: { pathname: "/raw/artifact" },
+    scrollX: 0,
+    scrollY: 0,
+    addEventListener(type, listener) { listeners.set(type, listener); }
+  };
+  const source = ANCHOR_BRIDGE.replace(/^<script[^>]*>/, "").replace(/<\/script>$/, "");
+  runInNewContext(source, { document, window, URL });
+  return {
+    messages,
+    repaint(anchors) {
+      listeners.get("message")({ source: parent, data: { type: "anchor:repaint", anchors } });
+      return messages.at(-1);
+    },
+    resize() { listeners.get("resize")(); }
+  };
+}
 
 test("anchor bridge injects before the real (last) </body>, not one inside a script string", () => {
   const html = '<html><body><script>var x = "</body>";</script><p>hi</p></body></html>';
@@ -25,6 +56,39 @@ test("anchor bridge handles pointer drag boxes as well as click points", () => {
   assert.match(ANCHOR_BRIDGE, /pointerup/);
   assert.match(ANCHOR_BRIDGE, /w:bw,h:bh/);
   assert.match(ANCHOR_BRIDGE, /data-artifact-anchor-selection/);
+});
+
+test("anchor bridge tracks a selector target when the document reflows", () => {
+  const selector = "html:nth-child(1)>body:nth-child(2)>section:nth-child(1)";
+  let rect = { left: 100, top: 200, width: 40, height: 60 };
+  const bridge = anchorBridgeHarness({
+    querySelector(path) {
+      assert.equal(path, selector);
+      return { getBoundingClientRect: () => rect };
+    }
+  });
+
+  bridge.repaint([{ id: "comment-1", path: selector, x: 0.12, y: 0.23 }]);
+  assert.deepEqual({ ...bridge.messages.at(-1).anchors[0] }, {
+    id: "comment-1", x: 120, y: 230, lost: false
+  });
+
+  rect = { left: 500, top: 600, width: 40, height: 60 };
+  bridge.resize();
+  assert.deepEqual({ ...bridge.messages.at(-1).anchors[0] }, {
+    id: "comment-1", x: 520, y: 630, lost: false
+  });
+});
+
+test("anchor bridge reports a lost position when its selector target is missing", () => {
+  const selector = "html:nth-child(1)>body:nth-child(2)>section:nth-child(2)";
+  const bridge = anchorBridgeHarness({ querySelector: () => null });
+
+  const message = bridge.repaint([
+    { id: "comment-missing", path: selector, x: 0.4, y: 0.5 }
+  ]);
+
+  assert.deepEqual({ ...message.anchors[0] }, { id: "comment-missing", lost: true });
 });
 
 test("raw HTML responses are sandboxed into an opaque origin", () => {
