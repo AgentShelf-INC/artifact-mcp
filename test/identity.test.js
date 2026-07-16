@@ -64,7 +64,8 @@ test("JWT identity prefers the assertion header and ignores the Access cookie", 
     assert.equal(typeof calls[0].jwks, "function");
     assert.deepEqual(calls[0].options, {
       issuer: "https://team.cloudflareaccess.com",
-      audience: "access-audience"
+      audience: "access-audience",
+      clockTolerance: 60
     });
   });
 });
