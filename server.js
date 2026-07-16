@@ -8,7 +8,7 @@ import db, { ARTIFACT_DIR, seedKeysFromEnv } from "./lib/db.js";
 import { sha256Hex, checkKey } from "./lib/auth.js";
 import { handleMcp } from "./lib/mcp.js";
 import * as artifactStore from "./lib/store.js";
-import { ACCESS_IDENTITY_MODE, assertReady, resolveViewer } from "./lib/identity.js";
+import { ACCESS_IDENTITY_MODE, assertReady, readAccessCookie, resolveViewer } from "./lib/identity.js";
 import { accessSessionRetryPage, renderGallery, renderArtifactShell, notFoundPage, notSignedInPage } from "./lib/portal.js";
 import { renderSettings } from "./lib/settings.js";
 import { listKeys, createKey, revokeKey } from "./lib/keys.js";
@@ -63,12 +63,7 @@ function preventResponseTransforms(res) {
 }
 
 function hasAccessSessionCookie(req) {
-  const values = Array.isArray(req.headers.cookie) ? req.headers.cookie : [req.headers.cookie];
-  return values.filter(Boolean).some((value) => String(value).split(";").some((part) => {
-    const separator = part.indexOf("=");
-    return separator >= 0 && part.slice(0, separator).trim() === "CF_Authorization" &&
-      part.slice(separator + 1).trim().length > 0;
-  }));
+  return Boolean(readAccessCookie(req));
 }
 
 function accessRetryTarget(req) {
