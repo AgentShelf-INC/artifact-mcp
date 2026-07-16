@@ -8,7 +8,8 @@ import db, { ARTIFACT_DIR, seedKeysFromEnv } from "./lib/db.js";
 import { sha256Hex, checkKey } from "./lib/auth.js";
 import { handleMcp } from "./lib/mcp.js";
 import * as artifactStore from "./lib/store.js";
-import { ACCESS_IDENTITY_MODE, assertReady, readAccessCookie, resolveViewer } from "./lib/identity.js";
+import { ACCESS_IDENTITY_MODE, assertReady, resolveViewer } from "./lib/identity.js";
+import { accessRetryTarget } from "./lib/access-retry.js";
 import { accessSessionRetryPage, renderGallery, renderArtifactShell, notFoundPage, notSignedInPage } from "./lib/portal.js";
 import { renderSettings } from "./lib/settings.js";
 import { listKeys, createKey, revokeKey } from "./lib/keys.js";
@@ -60,24 +61,6 @@ function preventResponseTransforms(res) {
     }
     return writeHead.apply(this, arguments);
   };
-}
-
-function hasAccessSessionCookie(req) {
-  return Boolean(readAccessCookie(req));
-}
-
-function accessRetryTarget(req) {
-  if (ACCESS_IDENTITY_MODE !== "jwt" || req.method !== "GET" || !hasAccessSessionCookie(req)) return null;
-  const assertion = req.headers["cf-access-jwt-assertion"];
-  if (Array.isArray(assertion) ? assertion.some(Boolean) : assertion) return null;
-  try {
-    const url = new URL(req.url || "/", "http://artifact-mcp.local");
-    if (url.pathname !== "/" || url.searchParams.has(ACCESS_RETRY_PARAM)) return null;
-    url.searchParams.set(ACCESS_RETRY_PARAM, "1");
-    return `${url.pathname}${url.search}`;
-  } catch {
-    return null;
-  }
 }
 
 assertReady();
@@ -210,7 +193,10 @@ const server = createServer((req, res) => {
   // Applying it at the listener boundary preserves every body and every route's
   // existing no-store/private cache semantics without relying on route coverage.
   preventResponseTransforms(res);
-  const retryTarget = accessRetryTarget(req);
+  const retryTarget = accessRetryTarget(req, {
+    mode: ACCESS_IDENTITY_MODE,
+    param: ACCESS_RETRY_PARAM
+  });
   if (retryTarget) {
     res.statusCode = 200;
     res.setHeader("content-type", "text/html; charset=utf-8");

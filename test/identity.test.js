@@ -132,6 +132,90 @@ test("Access cookie parsing handles arrays, whitespace, multiple cookies, and eq
   });
 });
 
+test("Access session retry targets root and valid direct artifact navigations", async () => {
+  await withIdentityEnv(JWT_ENV, async () => {
+    const { accessRetryTarget } = await import("../lib/access-retry.js");
+    const request = (url) => ({
+      method: "GET",
+      url,
+      headers: { cookie: "CF_Authorization=session-token" }
+    });
+
+    assert.equal(
+      accessRetryTarget(request("/"), { mode: "jwt", param: "cf_access_retry" }),
+      "/?cf_access_retry=1"
+    );
+    assert.equal(
+      accessRetryTarget(request("/abcdef123456"), { mode: "jwt", param: "cf_access_retry" }),
+      "/abcdef123456?cf_access_retry=1"
+    );
+    assert.equal(
+      accessRetryTarget(request("/abcdef123456?view=grid"), { mode: "jwt", param: "cf_access_retry" }),
+      "/abcdef123456?view=grid&cf_access_retry=1"
+    );
+  });
+});
+
+test("Access session retry excludes non-shell, reserved, malformed, and multi-segment paths", async () => {
+  await withIdentityEnv(JWT_ENV, async () => {
+    const { accessRetryTarget } = await import("../lib/access-retry.js");
+    const request = (url) => ({
+      method: "GET",
+      url,
+      headers: { cookie: "CF_Authorization=session-token" }
+    });
+    const ineligible = [
+      "/raw/abcdef123456",
+      "/raw/abcdef123456/x.css",
+      "/thumbnails/abcdef123456",
+      "/s/sometoken",
+      "/abcdef123456/history",
+      "/abcdef123456/feedback",
+      "/mcp",
+      "/health",
+      "/settings",
+      "/raw",
+      "/short",
+      `/${"a".repeat(25)}`,
+      "/ABCDEF123456",
+      "/abcdef/second"
+    ];
+
+    for (const pathname of ineligible) {
+      assert.equal(
+        accessRetryTarget(request(pathname), { mode: "jwt", param: "cf_access_retry" }),
+        null,
+        pathname
+      );
+    }
+  });
+});
+
+test("Access session retry preserves identity, method, assertion, and once-only guards", async () => {
+  await withIdentityEnv(JWT_ENV, async () => {
+    const { accessRetryTarget } = await import("../lib/access-retry.js");
+    const base = {
+      method: "GET",
+      url: "/abcdef123456",
+      headers: { cookie: "CF_Authorization=session-token" }
+    };
+    const target = (request, mode = "jwt") => accessRetryTarget(request, {
+      mode,
+      param: "cf_access_retry"
+    });
+
+    assert.equal(target({ ...base, headers: {} }), null);
+    assert.equal(target({ ...base, headers: {
+      ...base.headers,
+      "cf-access-jwt-assertion": "signed-assertion"
+    } }), null);
+    assert.equal(target({ ...base, url: "/abcdef123456?cf_access_retry=1" }), null);
+    assert.equal(target({ ...base, method: "POST" }), null);
+    assert.equal(target(base, "header-trust"), null);
+    assert.equal(target(base, "disabled"), null);
+  });
+});
+
 test("header-trust and disabled identity modes are unaffected", async () => {
   await withIdentityEnv({ TRUST_ACCESS_HEADERS: "1" }, async ({ ACCESS_IDENTITY_MODE, createViewerResolver }) => {
     assert.equal(ACCESS_IDENTITY_MODE, "header-trust");
