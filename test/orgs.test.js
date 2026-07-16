@@ -24,7 +24,30 @@ test("creating an org with a domain makes it resolvable and listed", () => {
   assert.ok(orgs.listOrgNames().includes("acme"));
   const row = orgs.listOrgs().find((o) => o.name === "acme");
   assert.equal(row.label, "Acme Inc");
+  assert.deepEqual(row.emails, []);
   assert.deepEqual(row.categories, []);
+});
+
+test("explicit email members normalize, resolve, list, and remove", () => {
+  const added = orgs.addEmailMember("acme", "  Person@Example.com  ");
+  assert.deepEqual(added, { org: "acme", email: "person@example.com" });
+  assert.equal(orgs.orgForEmail("PERSON@EXAMPLE.COM"), "acme");
+  assert.deepEqual(orgs.listOrgs().find((o) => o.name === "acme").emails, ["person@example.com"]);
+  assert.equal(orgs.removeEmailMember("acme", " PERSON@example.com "), true);
+  assert.equal(orgs.orgForEmail("person@example.com"), null);
+  assert.equal(orgs.removeEmailMember("acme", "person@example.com"), false);
+});
+
+test("explicit email members reject invalid, unknown, duplicate, and conflicting ownership", () => {
+  orgs.createOrg({ name: "email-one" });
+  orgs.createOrg({ name: "email-two" });
+  for (const email of ["", "not-an-email", "a@@example.com", "person@localhost", `${"a".repeat(65)}@example.com`, `${"a".repeat(245)}@example.com`]) {
+    assert.throws(() => orgs.addEmailMember("email-one", email), /valid email address/i, email);
+  }
+  assert.throws(() => orgs.addEmailMember("ghost", "person@example.com"), /Unknown organization/);
+  orgs.addEmailMember("email-one", "person@example.com");
+  assert.throws(() => orgs.addEmailMember("email-one", "PERSON@example.com"), /already on this org/);
+  assert.throws(() => orgs.addEmailMember("email-two", "person@example.com"), /already mapped to "email-one"/);
 });
 
 test("duplicate orgs, bad domains, reserved names, and taken domains are rejected", () => {
@@ -54,12 +77,14 @@ test("domains and categories can be added and removed independently", () => {
   assert.deepEqual(orgs.categoriesFor("delta"), ["Dashboards"]);
 });
 
-test("deleting an org cascades its domains and categories", () => {
+test("deleting an org cascades its domains, email members, and categories", () => {
   orgs.createOrg({ name: "epsilon", domain: "epsilon.test" });
+  orgs.addEmailMember("epsilon", "member@shared.test");
   orgs.addCategory("epsilon", "Specs");
   assert.equal(orgs.deleteOrg("epsilon"), true);
   assert.equal(orgs.orgExists("epsilon"), false);
   assert.equal(orgs.orgForDomain("epsilon.test"), null);
+  assert.equal(orgs.orgForEmail("member@shared.test"), null);
   assert.deepEqual(orgs.categoriesFor("epsilon"), []);
 });
 

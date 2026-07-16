@@ -7,6 +7,7 @@ import { join } from "node:path";
 const identityDataDir = mkdtempSync(join(tmpdir(), "artifact-mcp-identity-unit-"));
 const previousDataDir = process.env.DATA_DIR;
 process.env.DATA_DIR = identityDataDir;
+const orgs = await import("../lib/orgs.js");
 test.after(() => {
   if (previousDataDir === undefined) delete process.env.DATA_DIR;
   else process.env.DATA_DIR = previousDataDir;
@@ -149,4 +150,70 @@ test("header-trust and disabled identity modes are unaffected", async () => {
       cookie: "CF_Authorization=ignored"
     } }), NO_VIEWER);
   });
+});
+
+test("explicit email membership wins before domain routing but never before admin identity", async () => {
+  orgs.createOrg({ name: "identity-explicit" });
+  orgs.createOrg({ name: "identity-domain", domain: "shared.test" });
+  orgs.addEmailMember("identity-explicit", "contractor@shared.test");
+  orgs.addEmailMember("identity-explicit", "admin@shared.test");
+  orgs.addEmailMember("identity-explicit", "domain-admin@admin-shared.test");
+
+  try {
+    await withIdentityEnv({
+      TRUST_ACCESS_HEADERS: "1",
+      ORG_EMAIL_DOMAINS: "shared.test:identity-env,env.test:environment-org",
+      ADMIN_EMAILS: "admin@shared.test",
+      ADMIN_EMAIL_DOMAINS: "admin-shared.test"
+    }, async ({ createViewerResolver }) => {
+      const resolveViewer = createViewerResolver();
+      const requestFor = (email) => ({ headers: { "cf-access-authenticated-user-email": email } });
+
+      assert.deepEqual(await resolveViewer(requestFor("contractor@shared.test")), {
+        email: "contractor@shared.test", org: "identity-explicit", isAdmin: false
+      });
+      assert.deepEqual(await resolveViewer(requestFor("admin@shared.test")), {
+        email: "admin@shared.test", org: "admin", isAdmin: true
+      });
+      assert.deepEqual(await resolveViewer(requestFor("domain-admin@admin-shared.test")), {
+        email: "domain-admin@admin-shared.test", org: "admin", isAdmin: true
+      });
+
+      assert.equal(orgs.removeEmailMember("identity-explicit", "contractor@shared.test"), true);
+      assert.deepEqual(await resolveViewer(requestFor("contractor@shared.test")), {
+        email: "contractor@shared.test", org: "identity-domain", isAdmin: false
+      });
+
+      orgs.addEmailMember("identity-explicit", "person@env.test");
+      assert.equal((await resolveViewer(requestFor("person@env.test"))).org, "identity-explicit");
+      orgs.removeEmailMember("identity-explicit", "person@env.test");
+      assert.equal((await resolveViewer(requestFor("person@env.test"))).org, "environment-org");
+      assert.equal((await resolveViewer(requestFor("person@fallback.test"))).org, "fallback.test");
+    });
+  } finally {
+    orgs.deleteOrg("identity-domain");
+    orgs.deleteOrg("identity-explicit");
+  }
+});
+
+test("a whitespace-padded identity is normalized before admin, mapping, and domain resolution", async () => {
+  orgs.createOrg({ name: "ws-explicit" });
+  orgs.addEmailMember("ws-explicit", "boss@ws.test");
+  try {
+    await withIdentityEnv({
+      TRUST_ACCESS_HEADERS: "1",
+      ADMIN_EMAILS: "boss@ws.test"
+    }, async ({ createViewerResolver }) => {
+      const resolveViewer = createViewerResolver();
+      // The verified email arrives with surrounding whitespace and mixed case. It must be
+      // normalized before the admin check, or the trimmed mapping lookup would demote the
+      // configured administrator into "ws-explicit" — the exact precedence the PBI forbids.
+      assert.deepEqual(
+        await resolveViewer({ headers: { "cf-access-authenticated-user-email": "  Boss@WS.test  " } }),
+        { email: "boss@ws.test", org: "admin", isAdmin: true }
+      );
+    });
+  } finally {
+    orgs.deleteOrg("ws-explicit");
+  }
 });

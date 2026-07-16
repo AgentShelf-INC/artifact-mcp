@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createApp } from "../lib/app.js";
 import { createArtifactPreviewNotifier } from "../lib/preview.js";
+import { renderSettings } from "../lib/settings.js";
 
 const identityDataDir = mkdtempSync(join(tmpdir(), "artifact-mcp-identity-"));
 process.env.DATA_DIR = identityDataDir;
@@ -65,6 +66,8 @@ function dependencies(overrides = {}) {
       remove: () => true,
       addDomain: () => ({}),
       removeDomain: () => true,
+      addEmailMember: () => ({}),
+      removeEmailMember: () => true,
       addCategory: () => ({}),
       removeCategory: () => true,
       setColor: () => ({}),
@@ -457,6 +460,95 @@ test("admins create organizations through the registry", async () => {
     assert.deepEqual(received, { name: "newco", domain: "newco.test", label: undefined });
     assert.equal((await response.json()).name, "newco");
   });
+});
+
+test("explicit email membership routes are admin-only and return normalized values", async () => {
+  const calls = [];
+  const base = dependencies({
+    resolveViewer: async () => ({ email: "admin@example.test", org: "admin", isAdmin: true })
+  });
+  base.orgs = {
+    ...base.orgs,
+    addEmailMember(org, email) {
+      calls.push(["add", org, email]);
+      return { org, email: String(email).trim().toLowerCase() };
+    },
+    removeEmailMember(org, email) {
+      calls.push(["remove", org, email]);
+      return email === "person@example.com";
+    }
+  };
+  const app = createApp(base);
+
+  const added = await invokeRoute(app, "post", "/settings/orgs/:name/emails", {
+    params: { name: "acme" }, body: { email: " Person@Example.com " }
+  });
+  assert.equal(added.status, 200);
+  assert.deepEqual(added.body, { org: "acme", email: "person@example.com" });
+
+  const removed = await invokeRoute(app, "delete", "/settings/orgs/:name/emails/:email", {
+    params: { name: "acme", email: "person@example.com" }
+  });
+  assert.equal(removed.status, 200);
+  assert.deepEqual(removed.body, { org: "acme", email: "person@example.com", removed: true });
+  assert.deepEqual(calls, [
+    ["add", "acme", " Person@Example.com "],
+    ["remove", "acme", "person@example.com"]
+  ]);
+});
+
+test("explicit email membership conflicts return the current owner for remediation", async () => {
+  const base = dependencies({
+    resolveViewer: async () => ({ email: "admin@example.test", org: "admin", isAdmin: true })
+  });
+  base.orgs = {
+    ...base.orgs,
+    addEmailMember() { throw new Error('Email "person@example.com" is already mapped to "other".'); }
+  };
+  const response = await invokeRoute(createApp(base), "post", "/settings/orgs/:name/emails", {
+    params: { name: "acme" }, body: { email: "person@example.com" }
+  });
+  assert.equal(response.status, 400);
+  assert.match(response.body.error, /already mapped to "other"/);
+});
+
+test("non-admin and cross-org viewers cannot manage explicit email memberships", async () => {
+  for (const viewer of [
+    { email: "member@acme.test", org: "acme", isAdmin: false },
+    { email: "member@other.test", org: "other", isAdmin: false }
+  ]) {
+    let mutations = 0;
+    const base = dependencies({ resolveViewer: async () => viewer });
+    base.orgs = {
+      ...base.orgs,
+      addEmailMember() { mutations += 1; },
+      removeEmailMember() { mutations += 1; }
+    };
+    const app = createApp(base);
+    const add = await invokeRoute(app, "post", "/settings/orgs/:name/emails", {
+      params: { name: "acme" }, body: { email: "person@example.com" }
+    });
+    const remove = await invokeRoute(app, "delete", "/settings/orgs/:name/emails/:email", {
+      params: { name: "acme", email: "person@example.com" }
+    });
+    assert.equal(add.status, 403);
+    assert.equal(remove.status, 403);
+    assert.equal(mutations, 0);
+  }
+});
+
+test("Settings renders escaped explicit email chips and explains Access policy", () => {
+  const html = renderSettings(
+    { email: "admin@example.test", org: "admin", isAdmin: true },
+    [],
+    [{ name: "acme", label: "", color: null, domains: [], emails: ["person+tag@example.com", '"><script>alert(1)</script>@example.com'], categories: [], keyCount: 0 }]
+  );
+  assert.match(html, /Specific emails/);
+  assert.match(html, /person\+tag@example\.com/);
+  assert.doesNotMatch(html, /<script>alert\(1\)<\/script>/);
+  assert.match(html, /&lt;script&gt;alert\(1\)&lt;\/script&gt;/);
+  assert.match(html, /override domain routing/i);
+  assert.match(html, /Cloudflare Access Allow policy/i);
 });
 
 test("issuing a key to an unregistered org is refused", async () => {

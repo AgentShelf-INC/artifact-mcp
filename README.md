@@ -64,15 +64,16 @@ umbrella). Both light and dark themes ship; light shown here.*
   itself a new revision (append-only, undoable). Retention capped by `MAX_HISTORY`.
 
 ### Multi-tenancy
-- **Org registry** — admin-managed organizations, each with a name, one or more **email domains**
-  (which auto-tenant a signed-in viewer), and a **category** list — all edited in Settings.
+- **Org registry** — admin-managed organizations, each with a name, **specific email members**,
+  one or more **email domains** (which auto-tenant a signed-in viewer), and a **category** list —
+  all edited in Settings.
 - **Cloudflare Access front door** — humans log in (SSO); the app verifies the Access **JWT** so
   the tenant boundary can't be spoofed. `/mcp` is Access-bypassed (agents use the API key).
 - **Public share links** — an org member or admin can make an unlisted, read-only link for one
   artifact. Links are protected by an unguessable token and can expire or be revoked; they are
   deliberately public to anyone who has the URL.
-- **Strict isolation** — each key is locked to its org; each viewer is scoped to their org by
-  verified email domain. Cross-org reads return 404; cross-org mutations for a known id return 403. Admins see every org.
+- **Strict isolation** — each key is locked to its org; each viewer is scoped by their verified
+  email identity. Cross-org reads return 404; cross-org mutations for a known id return 403. Admins see every org.
 
 ### Organize
 - **Categories** — group an org's artifacts into per-category carousels; edit an artifact's
@@ -210,12 +211,12 @@ Two access surfaces, deliberately split:
 | `POST /:id/visibility` | hide / show (same-org member or admin) |
 | `POST /:id/move` | category or org move — **admin** (org move re-tenants) |
 | `DELETE /:id` | delete (admin or same-org viewer) |
-| `GET /settings` + `/settings/keys*` + `/settings/orgs*` (domains, categories, webhooks) | admin management (all admin-only) |
+| `GET /settings` + `/settings/keys*` + `/settings/orgs*` (specific emails, domains, categories, webhooks) | admin management (all admin-only) |
 
 ### Key files
 `server.js` (composition) · `lib/app.js` (routes) · `lib/access.js` (tenant policy) ·
 `lib/identity.js` (Access JWT → org) · `lib/mcp.js` + `lib/contracts.js` (tools + runtime contracts) ·
-`lib/store.js` (artifact lifecycle, history, crash-safety) · `lib/orgs.js` (org/domain/category
+`lib/store.js` (artifact lifecycle, history, crash-safety) · `lib/orgs.js` (org/email/domain/category
 registry) · `lib/feedback.js` (threaded feedback + anchors) · `lib/views.js` (analytics) ·
 `lib/webhooks.js` + `lib/notify.js` (Discord notifications) · `lib/reactions.js` (favorites/votes) ·
 `lib/keys.js` + `lib/auth.js` (hashed keys) · `lib/portal.js` (gallery + shell + anchor bridge) ·
@@ -344,8 +345,16 @@ setup is the commented same-project `cloudflared` service: configure its tunnel 
 `http://artifact-mcp:3480`, uncomment it, and remove the app's `ports:` section entirely. The
 tunnel then reaches the app over Compose's default network without any host port.
 
-Onboard a viewer org: create it in **Settings** (name + email domain) and add that domain to the
-Access allow-policy. Let an org **publish**: generate a key for it in Settings.
+Onboard a viewer org: create it in **Settings**, then add an email domain or a specific address.
+Viewer tenant resolution is: configured admin identity → explicit email mapping → registered
+domain → `ORG_EMAIL_DOMAINS` → the email domain itself. For example, mapping
+`contractor@gmail.com` to `acme` routes only that address to Acme; it does not map all of
+`gmail.com`.
+
+An explicit email mapping does **not** modify Cloudflare Access policy, send an invitation, or
+authenticate the user. The operator must separately permit that address in the Cloudflare Access
+Allow policy; the mapping only assigns an already authenticated viewer to an artifact-mcp org.
+Let an org **publish**: generate a key for it in Settings.
 
 ## Security model
 

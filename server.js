@@ -179,6 +179,8 @@ const app = createApp({
     remove: orgs.deleteOrg,
     addDomain: orgs.addDomain,
     removeDomain: orgs.removeDomain,
+    addEmailMember: orgs.addEmailMember,
+    removeEmailMember: orgs.removeEmailMember,
     addCategory: orgs.addCategory,
     removeCategory: orgs.removeCategory,
     setColor: orgs.setColor,

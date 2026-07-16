@@ -32,6 +32,14 @@ test("fresh databases apply ordered migrations with foreign keys enabled", () =>
       runtime.db.prepare("PRAGMA table_info(notification_reads)").all().map((column) => column.name),
       ["viewer_email", "seen_at"]
     );
+    assert.deepEqual(
+      runtime.db.prepare("PRAGMA table_info(org_email_members)").all().map((column) => column.name),
+      ["email", "org", "created_at"]
+    );
+    assert.ok(
+      runtime.db.prepare("PRAGMA index_list(org_email_members)").all()
+        .some((index) => index.name === "org_email_members_org_idx")
+    );
   } finally {
     runtime.db.close();
     rmSync(dataDir, { recursive: true, force: true });
@@ -41,12 +49,19 @@ test("fresh databases apply ordered migrations with foreign keys enabled", () =>
 test("reopening a migrated database is idempotent", () => {
   const dataDir = mkdtempSync(path.join(tmpdir(), "artifact-db-reopen-"));
   const first = openDatabase({ dataDir });
+  first.db.prepare("INSERT INTO orgs (name) VALUES (?)").run("reopen-org");
+  first.db.prepare("INSERT INTO org_email_members (email, org) VALUES (?, ?)")
+    .run("person@example.com", "reopen-org");
   first.db.close();
   const second = openDatabase({ dataDir });
 
   try {
     const versions = second.db.prepare("SELECT version FROM schema_migrations ORDER BY version").pluck().all();
     assert.deepEqual(versions, ALL_VERSIONS);
+    assert.equal(
+      second.db.prepare("SELECT org FROM org_email_members WHERE email = ?").pluck().get("person@example.com"),
+      "reopen-org"
+    );
   } finally {
     second.db.close();
     rmSync(dataDir, { recursive: true, force: true });
