@@ -242,6 +242,7 @@ For domain language, invariants, module seams, and workflows, see [`CONTEXT.md`]
 | `CF_ACCESS_TEAM_DOMAIN` + `CF_ACCESS_AUD` | Enable Access JWT verification (production) |
 | `TRUST_ACCESS_HEADERS` | Set to `1` only for loopback local development; trusts an unverified, spoofable identity header |
 | `REQUIRE_ACCESS_JWT` | Set to `1` to refuse startup unless both Access JWT variables are configured |
+| `ACCESS_CLOCK_TOLERANCE_S` | Leeway in seconds (default `60`) for Access JWT `nbf`/`exp` checks, absorbing edge/origin clock skew so a just-issued token isn't briefly rejected. Keep the host NTP-synced too |
 | `HOST_BIND` | Host publish address; defaults to loopback-only `127.0.0.1` |
 | `MAX_ARTIFACT_BYTES` (2MB) · `MAX_BUNDLE_BYTES` (8MB) · `MAX_BUNDLE_FILES` (100) | Content caps |
 | `MAX_HISTORY` (20) | Retained revisions per artifact |
@@ -364,6 +365,12 @@ Let an org **publish**: generate a key for it in Settings.
   authenticate a viewer. `TRUST_ACCESS_HEADERS=1` restores unverified header trust only as an
   explicit loopback-development convenience and is unsafe on a reachable origin. Production must
   configure both JWT settings and can enforce them at startup with `REQUIRE_ACCESS_JWT=1`.
+- **Resilient sign-in, same trust bar** — identity resolves from the verified `Cf-Access-Jwt-Assertion`
+  header or, when it lags in the moment right after login, the equally-verified `CF_Authorization`
+  session cookie; JWT checks tolerate small edge/origin clock skew (`ACCESS_CLOCK_TOLERANCE_S`); and a
+  cold direct-link navigation during the Access propagation window gets a single auto-reload instead of
+  a dead-end 404. None of this widens the tenant boundary — every path still verifies the JWT (same
+  JWKS, issuer, and audience) and applies the normal org concealment.
 - Every artifact is attributed to its uploading key; revoke a key to cut off a collaborator
   instantly. Org move re-tenants an artifact and all its child rows atomically.
 - **Sandboxed rendering** — every raw and shared response carries a CSP sandbox without `allow-same-origin`
